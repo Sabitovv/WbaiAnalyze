@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { api } from "./api";
 import * as XLSX from "xlsx";
 
@@ -19,6 +19,38 @@ const fmtP = n => (isNaN(n) || !isFinite(n)) ? '0.0' : n.toFixed(1);
 const num  = v => parseFloat(String(v).replace(/\s/g, '').replace(',', '.')) || 0;
 const toDay = () => new Date().toISOString().split('T')[0];
 const initials = name => (name || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+
+// ── Анимация чисел ────────────────────────────────────────────────────────────
+function useCountUp(target, duration = 600) {
+  const [val, setVal] = useState(0);
+  const prev = useRef(0);
+  useEffect(() => {
+    const start = prev.current;
+    const diff  = target - start;
+    if (!diff) return;
+    const startTime = performance.now();
+    const tick = (now) => {
+      const t = Math.min((now - startTime) / duration, 1);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setVal(start + diff * eased);
+      if (t < 1) requestAnimationFrame(tick);
+      else { setVal(target); prev.current = target; }
+    };
+    requestAnimationFrame(tick);
+  }, [target, duration]);
+  return val;
+}
+
+// Анимированное KPI значение (только для числовых, денежных)
+function AnimatedKpi({ value, format = 'money', color }) {
+  const animated = useCountUp(value);
+  const display = format === 'money'
+    ? fmt(animated) + ' ₸'
+    : format === 'pct'
+    ? fmtP(animated) + '%'
+    : fmt(animated);
+  return <span style={{ color }}>{display}</span>;
+}
 
 const PERIODS = [
   { k: 'day',   l: 'День',     days: 1 },
@@ -924,21 +956,23 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal })
       </div>
 
       {!total ? (
-        <div className="card"><div className="empty"><div className="empty-icon">📊</div>Нет данных за выбранный период</div></div>
+        <div className="card"><EmptyState type="chart" /></div>
       ) : (<>
         {/* KPI + сравнение периодов */}
         <div className="kpi-grid">
           {[
-            { l: 'Общая выручка',  f: 'rev',    v: fmt(total.rev) + ' ₸',    type: 'rev',    val: 1 },
-            { l: 'Чистая прибыль', f: 'profit',  v: fmt(total.profit) + ' ₸', type: 'profit', val: total.profit },
-            { l: 'Маржа',          f: 'margin',  v: fmtP(total.margin) + '%', type: 'margin', val: total.margin },
-            { l: 'ДРР',            f: 'drr',     v: fmtP(total.drr) + '%',    type: 'drr',    val: total.drr },
+            { l: 'Общая выручка',  f: 'rev',    fmt: 'money', type: 'rev',    val: total.rev },
+            { l: 'Чистая прибыль', f: 'profit', fmt: 'money', type: 'profit', val: total.profit },
+            { l: 'Маржа',          f: 'margin', fmt: 'pct',   type: 'margin', val: total.margin },
+            { l: 'ДРР',            f: 'drr',    fmt: 'pct',   type: 'drr',    val: total.drr },
           ].map(k => {
             const d = prevTotal ? diff(total[k.f], prevTotal[k.f]) : null;
             return (
               <div key={k.l} className="kpi-card">
                 <div className="kpi-label">{k.l}</div>
-                <div className="kpi-value" style={{ color: kpiColor(k.type, k.val) }}>{k.v}</div>
+                <div className="kpi-value">
+                  <AnimatedKpi value={k.val} format={k.fmt} color={kpiColor(k.type, k.val)} />
+                </div>
                 {d !== null ? (
                   <div className="kpi-sub" style={{ color: d >= 0 ? 'var(--green-txt)' : 'var(--red-txt)', fontWeight: 600 }}>
                     {d >= 0 ? '▲' : '▼'} {Math.abs(d).toFixed(1)}% vs прошлый
@@ -953,49 +987,66 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal })
 
         {/* Линейный график по дням */}
         {dailyData.length > 1 && (() => {
-          const W = 600, H = 160, pad = { t: 12, r: 16, b: 32, l: 64 };
-          const maxRev = Math.max(...dailyData.map(d => d.rev));
-          const minRev = Math.min(...dailyData.map(d => d.rev));
-          const range  = maxRev - minRev || 1;
+          const W = 620, H = 180, pad = { t: 16, r: 16, b: 32, l: 68 };
+          const allVals = [...dailyData.map(d => d.rev), ...dailyData.map(d => d.profit)];
+          const maxV = Math.max(...allVals);
+          const minV = Math.min(...allVals, 0);
+          const range = maxV - minV || 1;
           const iW = W - pad.l - pad.r;
           const iH = H - pad.t - pad.b;
           const x = i => pad.l + (i / (dailyData.length - 1)) * iW;
-          const y = v => pad.t + iH - ((v - minRev) / range) * iH;
-          const pts = dailyData.map((d, i) => `${x(i)},${y(d.rev)}`).join(' ');
-          const ptsFill = `${pad.l},${pad.t + iH} ${pts} ${pad.l + iW},${pad.t + iH}`;
+          const y = v => pad.t + iH - ((v - minV) / range) * iH;
+          const ptsRev    = dailyData.map((d, i) => `${x(i)},${y(d.rev)}`).join(' ');
+          const ptsProfit = dailyData.map((d, i) => `${x(i)},${y(d.profit)}`).join(' ');
+          const fillRev = `${pad.l},${pad.t + iH} ${ptsRev} ${pad.l + iW},${pad.t + iH}`;
           const tickCount = Math.min(dailyData.length, 6);
           const tickIdxs  = Array.from({ length: tickCount }, (_, i) => Math.round(i * (dailyData.length - 1) / (tickCount - 1)));
+          const zero0 = minV < 0 ? y(0) : null;
           return (
             <div className="card" style={{ padding: '16px 20px', marginBottom: 12, overflowX: 'auto' }}>
-              <div className="section-title" style={{ marginBottom: 12 }}>📈 Выручка по дням</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <div className="section-title" style={{ marginBottom: 0 }}>📈 Динамика по дням</div>
+                <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--txt3)' }}>
+                  <span><span style={{ display: 'inline-block', width: 16, height: 3, background: 'var(--blue)', borderRadius: 2, marginRight: 5, verticalAlign: 'middle' }} />Выручка</span>
+                  <span><span style={{ display: 'inline-block', width: 16, height: 3, background: 'var(--green-txt)', borderRadius: 2, marginRight: 5, verticalAlign: 'middle' }} />Прибыль</span>
+                </div>
+              </div>
               <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', maxWidth: W, height: H }}>
                 {/* Сетка */}
                 {[0, 0.25, 0.5, 0.75, 1].map(f => {
                   const yy = pad.t + iH * f;
-                  const val = maxRev - f * range;
+                  const val = maxV - f * range;
                   return (
                     <g key={f}>
                       <line x1={pad.l} y1={yy} x2={pad.l + iW} y2={yy}
                         stroke="var(--border)" strokeWidth="0.5" strokeDasharray="4 4" />
-                      <text x={pad.l - 6} y={yy + 4} textAnchor="end"
-                        style={{ fontSize: 9, fill: 'var(--txt3)' }}>
+                      <text x={pad.l - 6} y={yy + 4} textAnchor="end" style={{ fontSize: 9, fill: 'var(--txt3)' }}>
                         {val >= 1e6 ? (val/1e6).toFixed(1)+'M' : val >= 1e3 ? (val/1e3).toFixed(0)+'K' : val.toFixed(0)}
                       </text>
                     </g>
                   );
                 })}
-                {/* Заливка */}
-                <polygon points={ptsFill} fill="var(--blue)" opacity="0.12" />
-                {/* Линия */}
-                <polyline points={pts} fill="none" stroke="var(--blue)" strokeWidth="2" strokeLinejoin="round" />
+                {/* Нулевая линия если есть отрицательные значения */}
+                {zero0 !== null && (
+                  <line x1={pad.l} y1={zero0} x2={pad.l + iW} y2={zero0}
+                    stroke="var(--border)" strokeWidth="1" />
+                )}
+                {/* Заливка выручки */}
+                <polygon points={fillRev} fill="var(--blue)" opacity="0.08" />
+                {/* Линия выручки */}
+                <polyline points={ptsRev} fill="none" stroke="var(--blue)" strokeWidth="2.5" strokeLinejoin="round" />
+                {/* Линия прибыли */}
+                <polyline points={ptsProfit} fill="none" stroke="var(--green-txt)" strokeWidth="2" strokeLinejoin="round" strokeDasharray="0" />
                 {/* Точки */}
                 {dailyData.map((d, i) => (
-                  <circle key={i} cx={x(i)} cy={y(d.rev)} r="3" fill="var(--blue)" />
+                  <g key={i}>
+                    <circle cx={x(i)} cy={y(d.rev)} r="3" fill="var(--blue)" />
+                    <circle cx={x(i)} cy={y(d.profit)} r="2.5" fill="var(--green-txt)" />
+                  </g>
                 ))}
                 {/* Метки дат */}
                 {tickIdxs.map(i => (
-                  <text key={i} x={x(i)} y={H - 4} textAnchor="middle"
-                    style={{ fontSize: 9, fill: 'var(--txt3)' }}>
+                  <text key={i} x={x(i)} y={H - 4} textAnchor="middle" style={{ fontSize: 9, fill: 'var(--txt3)' }}>
                     {dailyData[i].date.slice(5)}
                   </text>
                 ))}
@@ -1226,14 +1277,16 @@ function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDel
       {summary && (
         <div className="kpi-grid" style={{ marginBottom: 16 }}>
           {[
-            { l: 'Выручка', v: fmt(summary.rev) + ' ₸',    col: 'var(--blue-txt)' },
-            { l: 'Расходы', v: fmt(summary.cost + summary.ads + summary.comm + summary.log_f + summary.log_r + summary.ret) + ' ₸', col: 'var(--red-txt)' },
-            { l: 'Прибыль', v: fmt(summary.profit) + ' ₸', col: kpiColor('profit', summary.profit) },
-            { l: 'Маржа',   v: fmtP(summary.margin) + '%', col: kpiColor('margin', summary.margin) },
+            { l: 'Выручка', v: summary.rev,    fmt: 'money', col: 'var(--blue-txt)',               type: 'rev' },
+            { l: 'Расходы', v: summary.cost + summary.ads + summary.comm + summary.log_f + summary.log_r + summary.ret, fmt: 'money', col: 'var(--red-txt)', type: 'rev' },
+            { l: 'Прибыль', v: summary.profit, fmt: 'money', col: kpiColor('profit',summary.profit), type: 'profit' },
+            { l: 'Маржа',   v: summary.margin, fmt: 'pct',   col: kpiColor('margin',summary.margin), type: 'margin' },
           ].map(k => (
             <div key={k.l} className="kpi-card">
               <div className="kpi-label">{k.l}</div>
-              <div className="kpi-value" style={{ color: k.col, fontSize: 18 }}>{k.v}</div>
+              <div className="kpi-value" style={{ fontSize: 18 }}>
+                <AnimatedKpi value={k.v} format={k.fmt} color={k.col} />
+              </div>
               <div className="kpi-sub">{summary.count} записей</div>
             </div>
           ))}
@@ -1256,10 +1309,7 @@ function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDel
           </div>
         )}
         {filtered.length === 0 ? (
-          <div className="empty">
-            <div className="empty-icon">🗂</div>
-            {visible.length === 0 ? 'Нет записей — заполни форму и нажми «Сохранить»' : 'Нет записей за выбранный период'}
-          </div>
+          <EmptyState type="history" />
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table>
@@ -1442,7 +1492,7 @@ function ReportPanel({ history, users, allCabs, isAdmin, userLogin }) {
         dateTo={dateTo} setDateTo={setDateTo} />
 
       {filtered.length === 0 ? (
-        <div className="card"><div className="empty"><div className="empty-icon">📦</div>Нет данных за период</div></div>
+        <div className="card"><EmptyState type="report" /></div>
       ) : (
         <>
           {/* ── Таблица по кабинетам ── */}
@@ -1687,7 +1737,7 @@ function TeamsPanel({ teams, setTeams, users, history }) {
       </div>
 
       {teams.length === 0 ? (
-        <div className="card"><div className="empty"><div className="empty-icon">👥</div>Создайте первую команду</div></div>
+        <div className="card"><EmptyState type="teams" /></div>
       ) : (
         <>
           {/* Лидерборд карточки */}
@@ -1795,6 +1845,163 @@ function TeamsPanel({ teams, setTeams, users, history }) {
   );
 }
 
+// ── Пустые состояния ─────────────────────────────────────────────────────────
+const EMPTY_STATES = {
+  chart: {
+    icon: (
+      <svg width="80" height="60" viewBox="0 0 80 60" fill="none">
+        <rect x="8" y="38" width="12" height="14" rx="3" fill="var(--blue)" opacity="0.25"/>
+        <rect x="26" y="28" width="12" height="24" rx="3" fill="var(--blue)" opacity="0.4"/>
+        <rect x="44" y="18" width="12" height="34" rx="3" fill="var(--blue)" opacity="0.6"/>
+        <rect x="62" y="8" width="12" height="44" rx="3" fill="var(--blue)" opacity="0.8"/>
+        <line x1="4" y1="54" x2="76" y2="54" stroke="var(--border)" strokeWidth="2"/>
+      </svg>
+    ),
+    title: 'Нет данных за период',
+    sub: 'Заполни статистику в разделе Калькулятор',
+  },
+  history: {
+    icon: (
+      <svg width="72" height="72" viewBox="0 0 72 72" fill="none">
+        <rect x="12" y="16" width="48" height="44" rx="8" fill="var(--bg-card2)" stroke="var(--border)" strokeWidth="1.5"/>
+        <rect x="20" y="28" width="32" height="3" rx="1.5" fill="var(--border)"/>
+        <rect x="20" y="36" width="24" height="3" rx="1.5" fill="var(--border)"/>
+        <rect x="20" y="44" width="16" height="3" rx="1.5" fill="var(--border)"/>
+        <circle cx="54" cy="20" r="10" fill="var(--bg-card)" stroke="var(--border)" strokeWidth="1.5"/>
+        <line x1="54" y1="15" x2="54" y2="21" stroke="var(--blue-txt)" strokeWidth="1.5" strokeLinecap="round"/>
+        <line x1="54" y1="21" x2="57" y2="24" stroke="var(--blue-txt)" strokeWidth="1.5" strokeLinecap="round"/>
+      </svg>
+    ),
+    title: 'История пуста',
+    sub: 'Сохранённые записи появятся здесь',
+  },
+  teams: {
+    icon: (
+      <svg width="80" height="60" viewBox="0 0 80 60" fill="none">
+        <circle cx="40" cy="22" r="12" fill="var(--blue-bg)" stroke="var(--blue)" strokeWidth="1.5"/>
+        <circle cx="16" cy="34" r="9" fill="var(--purple-bg)" stroke="var(--purple)" strokeWidth="1.5"/>
+        <circle cx="64" cy="34" r="9" fill="var(--green-bg)" stroke="var(--green)" strokeWidth="1.5"/>
+        <path d="M28 50 Q40 42 52 50" stroke="var(--border)" strokeWidth="1.5" fill="none"/>
+        <line x1="40" y1="34" x2="40" y2="42" stroke="var(--border)" strokeWidth="1.5"/>
+      </svg>
+    ),
+    title: 'Команд пока нет',
+    sub: 'Создай первую команду и добавь участников',
+  },
+  report: {
+    icon: (
+      <svg width="72" height="72" viewBox="0 0 72 72" fill="none">
+        <rect x="10" y="10" width="52" height="52" rx="10" fill="var(--bg-card2)" stroke="var(--border)" strokeWidth="1.5"/>
+        <path d="M20 46 L30 32 L40 38 L52 22" stroke="var(--green-txt)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+        <circle cx="20" cy="46" r="3" fill="var(--green-txt)"/>
+        <circle cx="30" cy="32" r="3" fill="var(--green-txt)"/>
+        <circle cx="40" cy="38" r="3" fill="var(--green-txt)"/>
+        <circle cx="52" cy="22" r="3" fill="var(--green-txt)"/>
+      </svg>
+    ),
+    title: 'Нет данных за период',
+    sub: 'Выбери другой период или добавь записи',
+  },
+};
+
+function EmptyState({ type = 'chart', action, actionLabel }) {
+  const s = EMPTY_STATES[type] || EMPTY_STATES.chart;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 20px', gap: 12 }}>
+      {s.icon}
+      <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--txt)' }}>{s.title}</div>
+      <div style={{ fontSize: 13, color: 'var(--txt3)', textAlign: 'center' }}>{s.sub}</div>
+      {action && (
+        <button className="btn btn-primary" style={{ marginTop: 8 }} onClick={action}>{actionLabel}</button>
+      )}
+    </div>
+  );
+}
+
+// ── Онбординг ─────────────────────────────────────────────────────────────────
+const ONBOARDING_STEPS = [
+  {
+    tab: 'calc',
+    title: '👋 Привет! Давай начнём',
+    text: 'Это калькулятор прибыли для WB. Каждый день вводи выручку и расходы — сайт покажет сколько ты заработал чистыми.',
+    anchor: 'top',
+  },
+  {
+    tab: 'calc',
+    title: '💰 Введи выручку и рекламу',
+    text: 'Выручка — это сумма заказов из личного кабинета WB. Реклама вводится в рублях — курс подтянется автоматически.',
+    anchor: 'form',
+  },
+  {
+    tab: 'calc',
+    title: '📦 Добавь товары',
+    text: 'Выбери товар из списка и укажи количество штук. Себестоимость и комиссия подтянутся автоматически из каталога.',
+    anchor: 'products',
+  },
+  {
+    tab: 'calc',
+    title: '💾 Сохрани запись',
+    text: 'Нажми «Сохранить запись» — данные уйдут в историю. Черновик сохраняется автоматически, так что можно вернуться позже.',
+    anchor: 'save',
+  },
+  {
+    tab: 'history',
+    title: '📋 История записей',
+    text: 'Здесь хранятся все твои записи. Можно фильтровать по периоду, кабинету и скачать в Excel или CSV.',
+    anchor: 'top',
+  },
+  {
+    tab: 'company',
+    title: '🏢 Компания',
+    text: 'Раздел для руководителя — общая статистика, сравнение с прошлым периодом и график выручки по дням.',
+    anchor: 'top',
+  },
+];
+
+function OnboardingOverlay({ step, total, onNext, onSkip }) {
+  const s = ONBOARDING_STEPS[step];
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 9000,
+      background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <div style={{
+        background: 'var(--bg-card)', borderRadius: 18, padding: '28px 32px',
+        maxWidth: 380, width: '90%', boxShadow: 'var(--shadow-lg)',
+        border: '1px solid var(--border)', animation: 'fadeIn 0.2s ease',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+          <span style={{ fontSize: 12, color: 'var(--txt3)', fontWeight: 600 }}>
+            {step + 1} / {total}
+          </span>
+          <button onClick={onSkip} style={{ background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--txt3)', fontSize: 18, lineHeight: 1 }}>×</button>
+        </div>
+        {/* Прогресс */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 20 }}>
+          {Array.from({ length: total }).map((_, i) => (
+            <div key={i} style={{
+              flex: 1, height: 3, borderRadius: 2,
+              background: i <= step ? 'var(--blue)' : 'var(--border)',
+              transition: 'background 0.3s',
+            }} />
+          ))}
+        </div>
+        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 10, color: 'var(--txt)' }}>{s.title}</div>
+        <div style={{ fontSize: 14, color: 'var(--txt2)', lineHeight: 1.6, marginBottom: 24 }}>{s.text}</div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button className="btn btn-primary" style={{ flex: 1 }} onClick={onNext}>
+            {step < total - 1 ? 'Дальше →' : '🎉 Начать работу'}
+          </button>
+          {step < total - 1 && (
+            <button className="btn" onClick={onSkip} style={{ fontSize: 12, color: 'var(--txt3)' }}>Пропустить</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Смена пароля ─────────────────────────────────────────────────────────────
 function ChangePasswordModal({ userId, onClose }) {
   const [oldPwd, setOldPwd] = useState('');
@@ -1880,6 +2087,14 @@ export default function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('wb_theme') || 'dark');
   const [showPwdModal, setShowPwdModal] = useState(false);
   const [comment, setComment] = useState('');
+  const [onboardStep, setOnboardStep] = useState(() =>
+    localStorage.getItem('wb_onboarded') ? -1 : 0
+  );
+  const [templates, setTemplates] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('wb_templates') || '[]'); } catch { return []; }
+  });
+  const [showTplModal, setShowTplModal] = useState(false);
+  const [tplName, setTplName] = useState('');
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -2010,6 +2225,26 @@ export default function App() {
     ...(isAdmin ? [{ k: 'admin', l: 'Администратор' }] : []),
   ];
 
+  const saveTemplate = useCallback(() => {
+    if (!tplName.trim() || !rows.length) return;
+    const tpl = { id: Date.now(), name: tplName.trim(), rows: rows.map(r => ({ ...r, id: undefined })) };
+    const updated = [...templates, tpl];
+    setTemplates(updated);
+    localStorage.setItem('wb_templates', JSON.stringify(updated));
+    setTplName(''); setShowTplModal(false);
+  }, [tplName, rows, templates]);
+
+  const loadTemplate = useCallback((tpl) => {
+    setRows(tpl.rows.map(r => ({ ...r, id: Date.now() + Math.random() })));
+    setShowTplModal(false);
+  }, []);
+
+  const deleteTemplate = useCallback((id) => {
+    const updated = templates.filter(t => t.id !== id);
+    setTemplates(updated);
+    localStorage.setItem('wb_templates', JSON.stringify(updated));
+  }, [templates]);
+
   if (!user) return <LoginScreen onLogin={setUser} />;
   if (loading) return (
     <div className="loading-screen">
@@ -2020,6 +2255,73 @@ export default function App() {
 
   return (
     <div className="app-layout">
+      {/* Онбординг */}
+      {onboardStep >= 0 && onboardStep < ONBOARDING_STEPS.length && (
+        <OnboardingOverlay
+          step={onboardStep}
+          total={ONBOARDING_STEPS.length}
+          onNext={() => {
+            const next = onboardStep + 1;
+            if (next >= ONBOARDING_STEPS.length) {
+              setOnboardStep(-1);
+              localStorage.setItem('wb_onboarded', '1');
+            } else {
+              setOnboardStep(next);
+            }
+          }}
+          onSkip={() => { setOnboardStep(-1); localStorage.setItem('wb_onboarded', '1'); }}
+        />
+      )}
+
+      {/* Модалка шаблонов */}
+      {showTplModal && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowTplModal(false)}>
+          <div className="modal" style={{ maxWidth: 420 }}>
+            <div className="modal-header">
+              <h2>📋 Шаблоны товаров</h2>
+              <button className="modal-close" onClick={() => setShowTplModal(false)}>×</button>
+            </div>
+            {/* Сохранить текущие товары как шаблон */}
+            <div style={{ marginBottom: 16, display: 'flex', gap: 8 }}>
+              <input className="form-input" value={tplName} onChange={e => setTplName(e.target.value)}
+                placeholder="Название шаблона…" style={{ flex: 1 }}
+                onKeyDown={e => e.key === 'Enter' && saveTemplate()} />
+              <button className="btn btn-primary" onClick={saveTemplate}
+                disabled={!tplName.trim() || !rows.length} style={{ whiteSpace: 'nowrap' }}>
+                Сохранить текущие
+              </button>
+            </div>
+            {templates.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--txt3)', fontSize: 13 }}>
+                Шаблонов пока нет.<br/>Добавь товары в калькуляторе и сохрани как шаблон.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {templates.map(t => (
+                  <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '10px 14px', borderRadius: 10, background: 'var(--bg-card2)',
+                    border: '1px solid var(--border)' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>{t.name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--txt3)', marginTop: 2 }}>
+                        {t.rows.length} {t.rows.length === 1 ? 'товар' : t.rows.length < 5 ? 'товара' : 'товаров'}
+                      </div>
+                    </div>
+                    <button className="btn btn-primary" style={{ fontSize: 12, padding: '5px 12px' }}
+                      onClick={() => loadTemplate(t)}>Загрузить</button>
+                    <button onClick={() => deleteTemplate(t.id)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer',
+                        color: 'var(--txt3)', fontSize: 18, padding: '0 4px', lineHeight: 1 }}
+                      onMouseEnter={e => e.target.style.color = 'var(--red-txt)'}
+                      onMouseLeave={e => e.target.style.color = 'var(--txt3)'}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <header className="topbar">
         <div className="topbar-inner">
           <div className="topbar-logo">
@@ -2176,9 +2478,13 @@ export default function App() {
                     <ProdRow key={r.id} row={r} catalog={catalog} rate={exRate} coeff={coeff} isAdmin={isAdmin}
                       onUpdate={updateRow} onDel={id => setRows(r => r.filter(x => x.id !== id))} />
                   ))}
-                  <button className="btn" style={{ marginTop: 8, width: '100%', justifyContent: 'center' }} onClick={addRow}>
-                    + Добавить товар
-                  </button>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                    <button className="btn" style={{ flex: 1, justifyContent: 'center' }} onClick={addRow}>
+                      + Добавить товар
+                    </button>
+                    <button className="btn" style={{ padding: '0 14px', fontSize: 13 }} onClick={() => setShowTplModal(true)}
+                      title="Шаблоны товаров">📋</button>
+                  </div>
                 </div>
               </div>
 
