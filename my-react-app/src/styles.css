@@ -1,3 +1,39 @@
+/* ── Светлая тема ────────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --bg: #f0f2f8;
+  --bg-card: #ffffff;
+  --bg-card2: #f5f7fc;
+  --bg-hover: #eaedfa;
+  --border: rgba(0,0,0,0.10);
+  --border2: rgba(0,0,0,0.05);
+
+  --txt: #1a1d2e;
+  --txt2: #4a5170;
+  --txt3: #8b91a8;
+
+  --blue: #3b6ef0;
+  --blue-bg: rgba(59,110,240,0.10);
+  --blue-txt: #2d5ccc;
+
+  --green: #16a34a;
+  --green-bg: rgba(22,163,74,0.10);
+  --green-txt: #15803d;
+
+  --red: #dc2626;
+  --red-bg: rgba(220,38,38,0.10);
+  --red-txt: #b91c1c;
+
+  --yellow: #d97706;
+  --yellow-bg: rgba(217,119,6,0.10);
+  --yellow-txt: #b45309;
+
+  --purple: #7c3aed;
+  --purple-bg: rgba(124,58,237,0.10);
+
+  --shadow: 0 1px 4px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.06);
+  --shadow-lg: 0 4px 24px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.08);
+}
+
 /* ── Переменные ──────────────────────────────────────────────────────────── */
 :root {
   --bg: #0f1117;

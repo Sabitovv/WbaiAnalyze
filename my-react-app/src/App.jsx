@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { api } from "./api";
+import * as XLSX from "xlsx";
 
 // ── Утилиты ───────────────────────────────────────────────────────────────────
 function logRub(w, d, h) {
@@ -800,16 +801,46 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal })
     return filterByRange(h, 'date', { period, dateFrom, dateTo });
   }, [history, period, dateFrom, dateTo, filterUser, filterCab]);
 
-  const total = useMemo(() => {
-    if (!filtered.length) return null;
-    const sum = f => filtered.reduce((a, r) => a + (parseFloat(r[f]) || 0), 0);
+  // Предыдущий аналогичный период для сравнения
+  const prevFiltered = useMemo(() => {
+    let h = history;
+    if (filterUser !== 'all') h = h.filter(r => r.user_login === filterUser);
+    if (filterCab  !== 'all') h = h.filter(r => r.cabinet    === filterCab);
+    const now = new Date();
+    if (period === 'month') {
+      const y = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+      const m = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
+      const from = `${y}-${String(m+1).padStart(2,'0')}-01`;
+      const to   = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
+      return h.filter(r => { const d = (r.date||'').split('T')[0]; return d >= from && d <= to; });
+    }
+    if (period === 'week') {
+      const ms = 7 * 24 * 60 * 60 * 1000;
+      const from = new Date(Date.now() - 2*ms).toISOString().split('T')[0];
+      const to   = new Date(Date.now() - ms).toISOString().split('T')[0];
+      return h.filter(r => { const d = (r.date||'').split('T')[0]; return d >= from && d <= to; });
+    }
+    return [];
+  }, [history, period, filterUser, filterCab]);
+
+  const calcTotal = (arr) => {
+    if (!arr.length) return null;
+    const sum = f => arr.reduce((a, r) => a + (parseFloat(r[f]) || 0), 0);
     const rev = sum('rev'), profit = sum('profit'), ads = sum('ads'),
           cost = sum('cost'), comm = sum('comm'), log_f = sum('log_f'), log_r = sum('log_r'), ret = sum('ret');
     return { rev, profit, ads, cost, comm, log_f, log_r, ret,
       margin: rev > 0 ? profit / rev * 100 : 0,
       drr:    rev > 0 ? ads / rev * 100 : 0,
-      days:   filtered.length };
-  }, [filtered]);
+      days:   arr.length };
+  };
+
+  const total     = useMemo(() => calcTotal(filtered),     [filtered]);
+  const prevTotal = useMemo(() => calcTotal(prevFiltered), [prevFiltered]);
+
+  const diff = (cur, prev) => {
+    if (!prev || prev === 0) return null;
+    return ((cur - prev) / Math.abs(prev)) * 100;
+  };
 
   const byUser = useMemo(() => {
     const map = {};
@@ -827,6 +858,20 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal })
         drr:    m.rev > 0 ? m.ads / m.rev * 100 : 0 };
     }).sort((a, b) => b.rev - a.rev);
   }, [filtered, users]);
+
+  // Данные для линейного графика по дням
+  const dailyData = useMemo(() => {
+    const map = {};
+    filtered.forEach(r => {
+      const d = (r.date || '').split('T')[0];
+      if (!d) return;
+      if (!map[d]) map[d] = { rev: 0, profit: 0 };
+      map[d].rev    += parseFloat(r.rev)    || 0;
+      map[d].profit += parseFloat(r.profit) || 0;
+    });
+    return Object.entries(map).sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, v]) => ({ date, ...v }));
+  }, [filtered]);
 
   const userLogins = [...new Set(history.map(r => r.user_login).filter(Boolean))];
   const totalExp = total ? total.cost + total.ads + total.comm + total.log_f + total.log_r + total.ret : 0;
@@ -855,12 +900,12 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal })
       </div>
 
       {/* Цель по выручке */}
-      <div className="card" style={{ padding: '14px 20px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 16 }}>
+      <div className="card" style={{ padding: '14px 20px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 12, color: 'var(--txt3)', whiteSpace: 'nowrap' }}>🎯 Цель выручки:</span>
         <input type="number" className="form-input" value={revenueGoal || ''} placeholder="Введи план ₸"
           style={{ width: 160 }} onChange={e => setRevenueGoal(+e.target.value || 0)} />
         {revenueGoal > 0 && total && (
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
               <span style={{ color: 'var(--txt2)' }}>{fmt(total.rev)} ₸ из {fmt(revenueGoal)} ₸</span>
               <span style={{ fontWeight: 700, color: total.rev >= revenueGoal ? 'var(--green-txt)' : 'var(--yellow-txt)' }}>
@@ -881,20 +926,83 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal })
       {!total ? (
         <div className="card"><div className="empty"><div className="empty-icon">📊</div>Нет данных за выбранный период</div></div>
       ) : (<>
+        {/* KPI + сравнение периодов */}
         <div className="kpi-grid">
           {[
-            { l: 'Общая выручка',  v: fmt(total.rev) + ' ₸',    type: 'rev',    val: 1 },
-            { l: 'Чистая прибыль', v: fmt(total.profit) + ' ₸', type: 'profit', val: total.profit },
-            { l: 'Маржа',          v: fmtP(total.margin) + '%', type: 'margin', val: total.margin },
-            { l: 'ДРР',            v: fmtP(total.drr) + '%',    type: 'drr',    val: total.drr },
-          ].map(k => (
-            <div key={k.l} className="kpi-card">
-              <div className="kpi-label">{k.l}</div>
-              <div className="kpi-value" style={{ color: kpiColor(k.type, k.val) }}>{k.v}</div>
-              <div className="kpi-sub">{total.days} записей</div>
-            </div>
-          ))}
+            { l: 'Общая выручка',  f: 'rev',    v: fmt(total.rev) + ' ₸',    type: 'rev',    val: 1 },
+            { l: 'Чистая прибыль', f: 'profit',  v: fmt(total.profit) + ' ₸', type: 'profit', val: total.profit },
+            { l: 'Маржа',          f: 'margin',  v: fmtP(total.margin) + '%', type: 'margin', val: total.margin },
+            { l: 'ДРР',            f: 'drr',     v: fmtP(total.drr) + '%',    type: 'drr',    val: total.drr },
+          ].map(k => {
+            const d = prevTotal ? diff(total[k.f], prevTotal[k.f]) : null;
+            return (
+              <div key={k.l} className="kpi-card">
+                <div className="kpi-label">{k.l}</div>
+                <div className="kpi-value" style={{ color: kpiColor(k.type, k.val) }}>{k.v}</div>
+                {d !== null ? (
+                  <div className="kpi-sub" style={{ color: d >= 0 ? 'var(--green-txt)' : 'var(--red-txt)', fontWeight: 600 }}>
+                    {d >= 0 ? '▲' : '▼'} {Math.abs(d).toFixed(1)}% vs прошлый
+                  </div>
+                ) : (
+                  <div className="kpi-sub">{total.days} записей</div>
+                )}
+              </div>
+            );
+          })}
         </div>
+
+        {/* Линейный график по дням */}
+        {dailyData.length > 1 && (() => {
+          const W = 600, H = 160, pad = { t: 12, r: 16, b: 32, l: 64 };
+          const maxRev = Math.max(...dailyData.map(d => d.rev));
+          const minRev = Math.min(...dailyData.map(d => d.rev));
+          const range  = maxRev - minRev || 1;
+          const iW = W - pad.l - pad.r;
+          const iH = H - pad.t - pad.b;
+          const x = i => pad.l + (i / (dailyData.length - 1)) * iW;
+          const y = v => pad.t + iH - ((v - minRev) / range) * iH;
+          const pts = dailyData.map((d, i) => `${x(i)},${y(d.rev)}`).join(' ');
+          const ptsFill = `${pad.l},${pad.t + iH} ${pts} ${pad.l + iW},${pad.t + iH}`;
+          const tickCount = Math.min(dailyData.length, 6);
+          const tickIdxs  = Array.from({ length: tickCount }, (_, i) => Math.round(i * (dailyData.length - 1) / (tickCount - 1)));
+          return (
+            <div className="card" style={{ padding: '16px 20px', marginBottom: 12, overflowX: 'auto' }}>
+              <div className="section-title" style={{ marginBottom: 12 }}>📈 Выручка по дням</div>
+              <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', maxWidth: W, height: H }}>
+                {/* Сетка */}
+                {[0, 0.25, 0.5, 0.75, 1].map(f => {
+                  const yy = pad.t + iH * f;
+                  const val = maxRev - f * range;
+                  return (
+                    <g key={f}>
+                      <line x1={pad.l} y1={yy} x2={pad.l + iW} y2={yy}
+                        stroke="var(--border)" strokeWidth="0.5" strokeDasharray="4 4" />
+                      <text x={pad.l - 6} y={yy + 4} textAnchor="end"
+                        style={{ fontSize: 9, fill: 'var(--txt3)' }}>
+                        {val >= 1e6 ? (val/1e6).toFixed(1)+'M' : val >= 1e3 ? (val/1e3).toFixed(0)+'K' : val.toFixed(0)}
+                      </text>
+                    </g>
+                  );
+                })}
+                {/* Заливка */}
+                <polygon points={ptsFill} fill="var(--blue)" opacity="0.12" />
+                {/* Линия */}
+                <polyline points={pts} fill="none" stroke="var(--blue)" strokeWidth="2" strokeLinejoin="round" />
+                {/* Точки */}
+                {dailyData.map((d, i) => (
+                  <circle key={i} cx={x(i)} cy={y(d.rev)} r="3" fill="var(--blue)" />
+                ))}
+                {/* Метки дат */}
+                {tickIdxs.map(i => (
+                  <text key={i} x={x(i)} y={H - 4} textAnchor="middle"
+                    style={{ fontSize: 9, fill: 'var(--txt3)' }}>
+                    {dailyData[i].date.slice(5)}
+                  </text>
+                ))}
+              </svg>
+            </div>
+          );
+        })()}
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
           <div className="card" style={{ padding: '20px 24px' }}>
@@ -983,32 +1091,50 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal })
 
 // ── История ───────────────────────────────────────────────────────────────────
 function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDelete, onClear }) {
-  const [period,     setPeriod]     = useState('month');
-  const [dateFrom,   setDateFrom]   = useState('');
-  const [dateTo,     setDateTo]     = useState('');
-  const [filterCab,  setFilterCab]  = useState('all');
-  const [delConfirm, setDelConfirm] = useState(null);
-  const [editRec,    setEditRec]    = useState(null); // запись для редактирования
+  const [period,      setPeriod]     = useState('month');
+  const [dateFrom,    setDateFrom]   = useState('');
+  const [dateTo,      setDateTo]     = useState('');
+  const [filterCab,   setFilterCab]  = useState('all');
+  const [filterUser,  setFilterUser] = useState('all');
+  const [delConfirm,  setDelConfirm] = useState(null);
+  const [editRec,     setEditRec]    = useState(null);
 
   const exportCSV = (rows) => {
-    const cols = ['Дата','Кабинет','Сотрудник','Выручка','Реклама','Себест.','Комиссия','Лог.дост.','Лог.возвр.','Возвраты','Прибыль','Маржа%','ДРР%'];
+    const cols = ['Дата','Кабинет','Сотрудник','Выручка','Реклама','Себест.','Комиссия','Лог.дост.','Лог.возвр.','Возвраты','Прибыль','Маржа%','ДРР%','Комментарий'];
     const lines = [cols.join(';'), ...rows.map(r => [
       r.date?.split('T')[0], r.cabinet, r.user_login,
       r.rev, r.ads, r.cost, r.comm, r.log_f, r.log_r, r.ret, r.profit,
-      fmtP(parseFloat(r.margin)), fmtP(parseFloat(r.drr)),
+      fmtP(parseFloat(r.margin)), fmtP(parseFloat(r.drr)), r.comment||'',
     ].join(';'))];
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
     a.download = `wb_history_${toDay()}.csv`; a.click();
   };
 
+  const exportXLSX = (rows) => {
+    const data = [
+      ['Дата','Кабинет','Сотрудник','Выручка','Реклама','Себест.','Комиссия','Лог.дост.','Лог.возвр.','Возвраты','Прибыль','Маржа%','ДРР%','Комментарий'],
+      ...rows.map(r => [
+        r.date?.split('T')[0], r.cabinet, r.user_login,
+        +r.rev||0, +r.ads||0, +r.cost||0, +r.comm||0, +r.log_f||0, +r.log_r||0, +r.ret||0, +r.profit||0,
+        parseFloat(r.margin)||0, parseFloat(r.drr)||0, r.comment||'',
+      ])
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [10,16,14,12,12,12,12,12,12,12,12,10,10,20].map(w => ({ wch: w }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'История');
+    XLSX.writeFile(wb, `wb_history_${toDay()}.xlsx`);
+  };
+
   const visible = isAdmin ? history : history.filter(h => h.user_login === userLogin);
 
   const filtered = useMemo(() => {
     let h = visible;
-    if (filterCab !== 'all') h = h.filter(r => r.cabinet === filterCab);
+    if (filterCab  !== 'all') h = h.filter(r => r.cabinet    === filterCab);
+    if (filterUser !== 'all') h = h.filter(r => r.user_login === filterUser);
     return filterByRange(h, 'date', { period, dateFrom, dateTo });
-  }, [visible, period, dateFrom, dateTo, filterCab]);
+  }, [visible, period, dateFrom, dateTo, filterCab, filterUser]);
 
   const summary = useMemo(() => {
     if (!filtered.length) return null;
@@ -1045,6 +1171,7 @@ function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDel
               { l: 'Логистика доставки ₸', k: 'log_f', type: 'number' },
               { l: 'Логистика возвратов ₸', k: 'log_r', type: 'number' },
               { l: 'Потери на возвраты ₸', k: 'ret', type: 'number' },
+              { l: 'Заметка', k: 'comment', type: 'text' },
             ].map(f => (
               <div key={f.k} style={{ marginBottom: 10 }}>
                 <label className="form-label">{f.l}</label>
@@ -1078,9 +1205,20 @@ function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDel
         </div>
       )}
 
+      {/* Фильтр по сотруднику (только для админа) */}
+      {isAdmin && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+          {[{ v: 'all', l: 'Все сотрудники' }, ...users.map(u => ({ v: u.login, l: u.name || u.login }))].map(o => (
+            <button key={o.v} className={`pill ${filterUser === o.v ? 'active' : ''}`}
+              onClick={() => setFilterUser(o.v)}>{o.l}</button>
+          ))}
+        </div>
+      )}
+
       {visible.length > 0 && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
-          <button className="btn" onClick={() => exportCSV(filtered)}>📥 Экспорт CSV</button>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+          <button className="btn" onClick={() => exportCSV(filtered)}>📥 CSV</button>
+          <button className="btn" onClick={() => exportXLSX(filtered)}>📊 Excel</button>
           {isAdmin && <button className="btn btn-danger" onClick={() => setDelConfirm('all')}>Очистить всю историю</button>}
         </div>
       )}
@@ -1131,6 +1269,7 @@ function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDel
                 {isAdmin && <th style={{ textAlign: 'left' }}>Сотрудник</th>}
                 <th>Выручка</th><th>Себес.</th><th>Реклама</th><th>Комиссия</th>
                 <th>Логистика</th><th>Возвраты</th><th>Прибыль</th><th>Маржа</th><th>ДРР</th>
+                <th style={{ textAlign: 'left' }}>Заметка</th>
                 <th></th>
               </tr></thead>
               <tbody>
@@ -1164,6 +1303,13 @@ function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDel
                     <td style={{ textAlign: 'right', fontWeight: 700, color: kpiColor('profit', parseFloat(h.profit)) }}>{fmt(h.profit)}</td>
                     <td style={{ textAlign: 'right', color: kpiColor('margin', parseFloat(h.margin)) }}>{fmtP(parseFloat(h.margin))}%</td>
                     <td style={{ textAlign: 'right', color: kpiColor('drr', parseFloat(h.drr)) }}>{fmtP(parseFloat(h.drr))}%</td>
+                    <td style={{ maxWidth: 120, fontSize: 11, color: 'var(--txt3)' }}>
+                      {h.comment ? (
+                        <span title={h.comment} style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          💬 {h.comment}
+                        </span>
+                      ) : '—'}
+                    </td>
                     <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'flex', gap: 2 }}>
                         <button onClick={() => setEditRec({ ...h })} style={{ background: 'none', border: 'none',
@@ -1649,6 +1795,58 @@ function TeamsPanel({ teams, setTeams, users, history }) {
   );
 }
 
+// ── Смена пароля ─────────────────────────────────────────────────────────────
+function ChangePasswordModal({ userId, onClose }) {
+  const [oldPwd, setOldPwd] = useState('');
+  const [newPwd, setNewPwd] = useState('');
+  const [newPwd2, setNewPwd2] = useState('');
+  const [err, setErr] = useState('');
+  const [ok, setOk] = useState(false);
+
+  const save = async () => {
+    setErr('');
+    if (!oldPwd || !newPwd) return setErr('Заполни все поля');
+    if (newPwd.length < 4) return setErr('Новый пароль минимум 4 символа');
+    if (newPwd !== newPwd2) return setErr('Пароли не совпадают');
+    try {
+      await api.changePassword(userId, oldPwd, newPwd);
+      setOk(true);
+      setTimeout(onClose, 1500);
+    } catch (e) { setErr(e.message); }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 380 }}>
+        <div className="modal-header">
+          <h2>🔑 Смена пароля</h2>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+        {ok ? (
+          <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--green-txt)', fontSize: 16, fontWeight: 600 }}>
+            ✓ Пароль успешно изменён!
+          </div>
+        ) : (<>
+          {[
+            { l: 'Текущий пароль', v: oldPwd, s: setOldPwd },
+            { l: 'Новый пароль',   v: newPwd, s: setNewPwd },
+            { l: 'Повтори новый',  v: newPwd2, s: setNewPwd2 },
+          ].map(f => (
+            <div key={f.l} style={{ marginBottom: 12 }}>
+              <label className="form-label">{f.l}</label>
+              <input type="password" className="form-input" value={f.v}
+                onChange={e => f.s(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && save()} />
+            </div>
+          ))}
+          {err && <div style={{ color: 'var(--red-txt)', fontSize: 13, marginBottom: 12 }}>{err}</div>}
+          <button className="btn btn-primary btn-full" onClick={save}>Сохранить</button>
+        </>)}
+      </div>
+    </div>
+  );
+}
+
 // ── Главный компонент ─────────────────────────────────────────────────────────
 export default function App() {
   const [user,    setUser]    = useState(() => {
@@ -1679,6 +1877,14 @@ export default function App() {
   const [saved,      setSaved]    = useState(false);
   const [revenueGoal, setRevenueGoal] = useState(() => +localStorage.getItem('wb_rev_goal') || 0);
   const [todayBanner, setTodayBanner] = useState(false);
+  const [theme, setTheme] = useState(() => localStorage.getItem('wb_theme') || 'dark');
+  const [showPwdModal, setShowPwdModal] = useState(false);
+  const [comment, setComment] = useState('');
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('wb_theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     if (!user) return;
@@ -1784,11 +1990,12 @@ export default function App() {
         date, cabinet, user_login: user.login,
         rev: calc.rev, ads: calc.ads, cost: calc.cost, comm: calc.comm,
         log_f: calc.logF, log_r: calc.logR, ret: calc.ret,
-        profit: calc.profit, margin: calc.margin, drr: calc.drr,
+        profit: calc.profit, margin: calc.margin, drr: calc.drr, comment,
       });
       setHist(h => [rec, ...h]);
       setSaved(true); setTimeout(() => setSaved(false), 2500);
       setTodayBanner(false);
+      setComment('');
       localStorage.removeItem('wb_draft');
     } catch (e) { alert('Ошибка: ' + e.message); }
   };
@@ -1831,10 +2038,18 @@ export default function App() {
               <div style={{ fontSize: 13, fontWeight: 500 }}>{user.name || user.login}</div>
               {isAdmin && <span className="badge badge-blue" style={{ fontSize: 10 }}>admin</span>}
             </div>
+            <button className="btn" style={{ padding: '4px 8px', fontSize: 16 }} title="Сменить тему"
+              onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}>
+              {theme === 'dark' ? '☀️' : '🌙'}
+            </button>
+            <button className="btn" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setShowPwdModal(true)}>🔑</button>
             <button className="logout-btn" onClick={() => { localStorage.removeItem('wb_user'); setUser(null); setRows([]); setAppTab('calc'); }}>Выйти</button>
           </div>
         </div>
       </header>
+
+      {/* Модалка смены пароля */}
+      {showPwdModal && <ChangePasswordModal userId={user.id} onClose={() => setShowPwdModal(false)} />}
 
       <div className="app-content">
 
@@ -1970,7 +2185,11 @@ export default function App() {
               {/* Результат */}
               <div>
                 <ResultPanel c={calc} />
-                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <div style={{ marginTop: 10, marginBottom: 8 }}>
+                  <input className="form-input" value={comment} onChange={e => setComment(e.target.value)}
+                    placeholder="💬 Комментарий к записи (необязательно)" />
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={save} className={`btn btn-lg btn-full ${saved ? 'btn-success' : 'btn-primary'}`}
                     style={{ flex: 1, transition: 'all 0.2s' }}>
                     {saved ? '✓ Сохранено!' : '💾 Сохранить запись'}
