@@ -37,8 +37,9 @@ export const api = {
   updateCab:    (id, data)     => req('PUT',    `/cabs/${id}`, data),
   deleteCab:    (id)           => req('DELETE', `/cabs/${id}`),
 
-  getHistory:   ()       => req('GET',    '/history'),
-  addHistory:   (rec)    => req('POST',   '/history', rec),
-  deleteRecord: (id)     => req('DELETE', `/history/${id}`),
-  clearHistory: ()       => req('DELETE', '/history'),
+  getHistory:    ()        => req('GET',    '/history'),
+  addHistory:    (rec)     => req('POST',   '/history', rec),
+  updateHistory: (id, rec) => req('PUT',    `/history/${id}`, rec),
+  deleteRecord:  (id)      => req('DELETE', `/history/${id}`),
+  clearHistory:  ()        => req('DELETE', '/history'),
 };

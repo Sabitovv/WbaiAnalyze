@@ -786,7 +786,7 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
 }
 
 // ── Дашборд компании ──────────────────────────────────────────────────────────
-function CompanyDashboard({ history, users, cabs }) {
+function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal }) {
   const [period,     setPeriod]     = useState('month');
   const [dateFrom,   setDateFrom]   = useState('');
   const [dateTo,     setDateTo]     = useState('');
@@ -852,6 +852,30 @@ function CompanyDashboard({ history, users, cabs }) {
           <button key={o.v} onClick={() => setFilterUser(o.v)}
             className={`pill ${filterUser === o.v ? 'active' : ''}`}>{o.l}</button>
         ))}
+      </div>
+
+      {/* Цель по выручке */}
+      <div className="card" style={{ padding: '14px 20px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 16 }}>
+        <span style={{ fontSize: 12, color: 'var(--txt3)', whiteSpace: 'nowrap' }}>🎯 Цель выручки:</span>
+        <input type="number" className="form-input" value={revenueGoal || ''} placeholder="Введи план ₸"
+          style={{ width: 160 }} onChange={e => setRevenueGoal(+e.target.value || 0)} />
+        {revenueGoal > 0 && total && (
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+              <span style={{ color: 'var(--txt2)' }}>{fmt(total.rev)} ₸ из {fmt(revenueGoal)} ₸</span>
+              <span style={{ fontWeight: 700, color: total.rev >= revenueGoal ? 'var(--green-txt)' : 'var(--yellow-txt)' }}>
+                {fmtP(Math.min(total.rev / revenueGoal * 100, 100))}%
+                {total.rev >= revenueGoal ? ' ✓' : ''}
+              </span>
+            </div>
+            <div className="progress-bar">
+              <div className="progress-fill" style={{
+                width: Math.min(total.rev / revenueGoal * 100, 100) + '%',
+                background: total.rev >= revenueGoal ? 'var(--green-txt)' : 'var(--blue)',
+              }} />
+            </div>
+          </div>
+        )}
       </div>
 
       {!total ? (
@@ -958,12 +982,25 @@ function CompanyDashboard({ history, users, cabs }) {
 }
 
 // ── История ───────────────────────────────────────────────────────────────────
-function HistoryPanel({ history, users, cabs, isAdmin, userLogin, onDelete, onClear }) {
+function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDelete, onClear }) {
   const [period,     setPeriod]     = useState('month');
   const [dateFrom,   setDateFrom]   = useState('');
   const [dateTo,     setDateTo]     = useState('');
   const [filterCab,  setFilterCab]  = useState('all');
   const [delConfirm, setDelConfirm] = useState(null);
+  const [editRec,    setEditRec]    = useState(null); // запись для редактирования
+
+  const exportCSV = (rows) => {
+    const cols = ['Дата','Кабинет','Сотрудник','Выручка','Реклама','Себест.','Комиссия','Лог.дост.','Лог.возвр.','Возвраты','Прибыль','Маржа%','ДРР%'];
+    const lines = [cols.join(';'), ...rows.map(r => [
+      r.date?.split('T')[0], r.cabinet, r.user_login,
+      r.rev, r.ads, r.cost, r.comm, r.log_f, r.log_r, r.ret, r.profit,
+      fmtP(parseFloat(r.margin)), fmtP(parseFloat(r.drr)),
+    ].join(';'))];
+    const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = `wb_history_${toDay()}.csv`; a.click();
+  };
 
   const visible = isAdmin ? history : history.filter(h => h.user_login === userLogin);
 
@@ -991,9 +1028,60 @@ function HistoryPanel({ history, users, cabs, isAdmin, userLogin, onDelete, onCl
         cabinet={filterCab} setCabinet={setFilterCab}
         cabinets={cabs} showCabFilter />
 
-      {isAdmin && visible.length > 0 && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-          <button className="btn btn-danger" onClick={() => setDelConfirm('all')}>Очистить всю историю</button>
+      {/* Модалка редактирования */}
+      {editRec && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setEditRec(null)}>
+          <div className="modal" style={{ maxWidth: 480 }}>
+            <div className="modal-header">
+              <h2>Редактировать запись</h2>
+              <button className="modal-close" onClick={() => setEditRec(null)}>×</button>
+            </div>
+            {[
+              { l: 'Дата', k: 'date', type: 'date' },
+              { l: 'Выручка ₸', k: 'rev', type: 'number' },
+              { l: 'Реклама ₸', k: 'ads', type: 'number' },
+              { l: 'Себестоимость ₸', k: 'cost', type: 'number' },
+              { l: 'Комиссия ₸', k: 'comm', type: 'number' },
+              { l: 'Логистика доставки ₸', k: 'log_f', type: 'number' },
+              { l: 'Логистика возвратов ₸', k: 'log_r', type: 'number' },
+              { l: 'Потери на возвраты ₸', k: 'ret', type: 'number' },
+            ].map(f => (
+              <div key={f.k} style={{ marginBottom: 10 }}>
+                <label className="form-label">{f.l}</label>
+                <input type={f.type} className="form-input" value={editRec[f.k] ?? ''}
+                  onChange={e => setEditRec(r => ({ ...r, [f.k]: e.target.value }))} />
+              </div>
+            ))}
+            <div style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)' }}>
+              {(() => {
+                const rev = +editRec.rev || 0, ads = +editRec.ads || 0, cost = +editRec.cost || 0;
+                const comm = +editRec.comm || 0, logF = +editRec.log_f || 0, logR = +editRec.log_r || 0, ret = +editRec.ret || 0;
+                const profit = rev - ads - cost - comm - logF - logR - ret;
+                const margin = rev > 0 ? profit / rev * 100 : 0;
+                return <span style={{ fontSize: 12, color: 'var(--txt2)' }}>
+                  Прибыль: <b style={{ color: kpiColor('profit', profit) }}>{fmt(profit)} ₸</b>
+                  {' · '}Маржа: <b style={{ color: kpiColor('margin', margin) }}>{fmtP(margin)}%</b>
+                </span>;
+              })()}
+            </div>
+            <button className="btn btn-primary btn-full" onClick={async () => {
+              const rev = +editRec.rev || 0, ads = +editRec.ads || 0, cost = +editRec.cost || 0;
+              const comm = +editRec.comm || 0, logF = +editRec.log_f || 0, logR = +editRec.log_r || 0, ret = +editRec.ret || 0;
+              const profit = rev - ads - cost - comm - logF - logR - ret;
+              const margin = rev > 0 ? profit / rev * 100 : 0;
+              const drr    = rev > 0 ? ads    / rev * 100 : 0;
+              const updated = await api.updateHistory(editRec.id, { ...editRec, rev, ads, cost, comm, log_f: logF, log_r: logR, ret, profit, margin, drr });
+              setHist(h => h.map(r => r.id === updated.id ? updated : r));
+              setEditRec(null);
+            }}>Сохранить</button>
+          </div>
+        </div>
+      )}
+
+      {visible.length > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
+          <button className="btn" onClick={() => exportCSV(filtered)}>📥 Экспорт CSV</button>
+          {isAdmin && <button className="btn btn-danger" onClick={() => setDelConfirm('all')}>Очистить всю историю</button>}
         </div>
       )}
 
@@ -1043,7 +1131,7 @@ function HistoryPanel({ history, users, cabs, isAdmin, userLogin, onDelete, onCl
                 {isAdmin && <th style={{ textAlign: 'left' }}>Сотрудник</th>}
                 <th>Выручка</th><th>Себес.</th><th>Реклама</th><th>Комиссия</th>
                 <th>Логистика</th><th>Возвраты</th><th>Прибыль</th><th>Маржа</th><th>ДРР</th>
-                {isAdmin && <th></th>}
+                <th></th>
               </tr></thead>
               <tbody>
                 {filtered.map(h => (
@@ -1076,14 +1164,20 @@ function HistoryPanel({ history, users, cabs, isAdmin, userLogin, onDelete, onCl
                     <td style={{ textAlign: 'right', fontWeight: 700, color: kpiColor('profit', parseFloat(h.profit)) }}>{fmt(h.profit)}</td>
                     <td style={{ textAlign: 'right', color: kpiColor('margin', parseFloat(h.margin)) }}>{fmtP(parseFloat(h.margin))}%</td>
                     <td style={{ textAlign: 'right', color: kpiColor('drr', parseFloat(h.drr)) }}>{fmtP(parseFloat(h.drr))}%</td>
-                    {isAdmin && (
-                      <td style={{ textAlign: 'right' }}>
-                        <button onClick={() => setDelConfirm(h.id)} style={{ background: 'none', border: 'none',
-                          cursor: 'pointer', color: 'var(--txt3)', fontSize: 16, padding: '0 4px' }}
-                          onMouseEnter={e => e.target.style.color = 'var(--red-txt)'}
-                          onMouseLeave={e => e.target.style.color = 'var(--txt3)'}>×</button>
-                      </td>
-                    )}
+                    <td style={{ textAlign: 'right' }}>
+                      <div style={{ display: 'flex', gap: 2 }}>
+                        <button onClick={() => setEditRec({ ...h })} style={{ background: 'none', border: 'none',
+                          cursor: 'pointer', color: 'var(--txt3)', fontSize: 14, padding: '0 4px' }}
+                          onMouseEnter={e => e.target.style.color = 'var(--blue-txt)'}
+                          onMouseLeave={e => e.target.style.color = 'var(--txt3)'}>✏️</button>
+                        {isAdmin && (
+                          <button onClick={() => setDelConfirm(h.id)} style={{ background: 'none', border: 'none',
+                            cursor: 'pointer', color: 'var(--txt3)', fontSize: 16, padding: '0 4px' }}
+                            onMouseEnter={e => e.target.style.color = 'var(--red-txt)'}
+                            onMouseLeave={e => e.target.style.color = 'var(--txt3)'}>×</button>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1362,16 +1456,23 @@ function TeamsPanel({ teams, setTeams, users, history }) {
   // Статистика по командам
   const teamStats = useMemo(() => {
     return teams.map(team => {
-      const logins = (team.member_ids || [])
-        .map(id => users.find(u => u.id === id)?.login).filter(Boolean);
+      const memberUsers = (team.member_ids || []).map(id => users.find(u => u.id === id)).filter(Boolean);
+      const logins = memberUsers.map(u => u.login);
       const recs = filtered.filter(r => logins.includes(r.user_login));
       const rev    = recs.reduce((s, r) => s + (parseFloat(r.rev)    || 0), 0);
       const profit = recs.reduce((s, r) => s + (parseFloat(r.profit) || 0), 0);
       const ads    = recs.reduce((s, r) => s + (parseFloat(r.ads)    || 0), 0);
+      // Рейтинг участников
+      const memberStats = memberUsers.map(u => {
+        const ur = recs.filter(r => r.user_login === u.login);
+        const uRev = ur.reduce((s, r) => s + (parseFloat(r.rev) || 0), 0);
+        const uProfit = ur.reduce((s, r) => s + (parseFloat(r.profit) || 0), 0);
+        return { ...u, rev: uRev, profit: uProfit };
+      }).sort((a, b) => b.rev - a.rev);
       return { ...team, rev, profit, ads,
         margin: rev > 0 ? profit / rev * 100 : 0,
         drr:    rev > 0 ? ads    / rev * 100 : 0,
-        cnt: recs.length, logins };
+        cnt: recs.length, logins, memberStats };
     }).sort((a, b) => b.rev - a.rev);
   }, [teams, filtered, users]);
 
@@ -1491,20 +1592,19 @@ function TeamsPanel({ teams, setTeams, users, history }) {
                   ))}
                 </div>
 
-                {/* Участники */}
-                {team.logins.length > 0 && (
-                  <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {team.member_ids.map(id => {
-                      const u = users.find(u => u.id === id);
-                      return u ? (
-                        <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 5,
-                          background: 'rgba(255,255,255,0.05)', borderRadius: 20,
-                          padding: '3px 10px 3px 4px', fontSize: 11 }}>
-                          <div className="avatar" style={{ width: 18, height: 18, fontSize: 8 }}>{initials(u.name || u.login)}</div>
-                          {u.name || u.login}
-                        </div>
-                      ) : null;
-                    })}
+                {/* Рейтинг участников */}
+                {team.memberStats?.length > 0 && (
+                  <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                    {team.memberStats.map((m, mi) => (
+                      <div key={m.login} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, color: mi === 0 ? 'var(--yellow-txt)' : 'var(--txt3)', minWidth: 16 }}>
+                          {medals[mi] || mi + 1}
+                        </span>
+                        <div className="avatar" style={{ width: 20, height: 20, fontSize: 8 }}>{initials(m.name || m.login)}</div>
+                        <span style={{ fontSize: 12, flex: 1 }}>{m.name || m.login}</span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: kpiColor('profit', m.profit) }}>{fmt(m.rev)} ₸</span>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -1574,10 +1674,11 @@ export default function App() {
   const [date,       setDate]     = useState(toDay());
   const [cabinet,    setCab]      = useState('');
   const [revenue,    setRev]      = useState('');
-  // реклама хранится в рублях, конвертируется в тенге при расчёте
   const [adsRub,     setAdsRub]   = useState('');
   const [rows,       setRows]     = useState([]);
   const [saved,      setSaved]    = useState(false);
+  const [revenueGoal, setRevenueGoal] = useState(() => +localStorage.getItem('wb_rev_goal') || 0);
+  const [todayBanner, setTodayBanner] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -1598,7 +1699,21 @@ export default function App() {
           setCab(firstCab.name);
           if (firstCab.buyout) setRet(+firstCab.buyout);
         }
-        if (cat.length) setRows([mkRow(cat[0])]);
+        // Восстановить черновик
+        const draft = (() => { try { return JSON.parse(localStorage.getItem('wb_draft') || 'null'); } catch { return null; } })();
+        if (draft) {
+          if (draft.date)    setDate(draft.date);
+          if (draft.revenue) setRev(draft.revenue);
+          if (draft.adsRub)  setAdsRub(draft.adsRub);
+          if (draft.rows?.length) setRows(draft.rows);
+          else if (cat.length) setRows([mkRow(cat[0])]);
+        } else if (cat.length) setRows([mkRow(cat[0])]);
+
+        // Уведомление если сегодня ещё нет записей
+        const today = new Date().toISOString().split('T')[0];
+        const hasToday = hist.some(r => (r.date || '').startsWith(today) && r.user_login === (user?.login));
+        if (!hasToday) setTodayBanner(true);
+
         fetchRate();
       })
       .finally(() => setLoading(false));
@@ -1606,6 +1721,12 @@ export default function App() {
 
   const mkRow = prod => ({ id: Date.now() + Math.random(), product: prod.name, qty: '', cost: prod.cost, comm: prod.comm });
   const addRow = () => { if (catalog.length) setRows(r => [...r, mkRow(catalog[0])]); };
+
+  // Автосохранение черновика
+  useEffect(() => {
+    if (!user) return;
+    localStorage.setItem('wb_draft', JSON.stringify({ date, revenue, adsRub, rows }));
+  }, [date, revenue, adsRub, rows]);
 
   const fetchRate = async () => {
     setRStatus('loading');
@@ -1667,6 +1788,8 @@ export default function App() {
       });
       setHist(h => [rec, ...h]);
       setSaved(true); setTimeout(() => setSaved(false), 2500);
+      setTodayBanner(false);
+      localStorage.removeItem('wb_draft');
     } catch (e) { alert('Ошибка: ' + e.message); }
   };
 
@@ -1718,6 +1841,16 @@ export default function App() {
         {/* ── Калькулятор ── */}
         {appTab === 'calc' && (
           <div className="fade-in">
+            {/* Баннер — сегодня не заполнено */}
+            {todayBanner && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14,
+                background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)',
+                borderRadius: 10, padding: '10px 16px' }}>
+                <span style={{ fontSize: 18 }}>⏰</span>
+                <span style={{ fontSize: 13, color: 'var(--yellow-txt)', flex: 1 }}>Сегодня ещё нет записи — не забудь заполнить статистику</span>
+                <button className="btn" style={{ fontSize: 11, padding: '3px 10px' }} onClick={() => setTodayBanner(false)}>✕</button>
+              </div>
+            )}
             {/* Курс + Настройки */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
               <div className="rate-bar">
@@ -1837,10 +1970,25 @@ export default function App() {
               {/* Результат */}
               <div>
                 <ResultPanel c={calc} />
-                <button onClick={save} className={`btn btn-lg btn-full ${saved ? 'btn-success' : 'btn-primary'}`}
-                  style={{ marginTop: 10, transition: 'all 0.2s' }}>
-                  {saved ? '✓ Сохранено!' : '💾 Сохранить запись'}
-                </button>
+                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                  <button onClick={save} className={`btn btn-lg btn-full ${saved ? 'btn-success' : 'btn-primary'}`}
+                    style={{ flex: 1, transition: 'all 0.2s' }}>
+                    {saved ? '✓ Сохранено!' : '💾 Сохранить запись'}
+                  </button>
+                  <button className="btn btn-lg" style={{ padding: '0 16px', flexShrink: 0 }}
+                    title="Копировать результат"
+                    onClick={() => {
+                      const txt = [
+                        `📅 ${date}  📦 ${cabinet}`,
+                        `Выручка:  ${fmt(calc.rev)} ₸`,
+                        `Реклама:  ${fmt(calc.ads)} ₸`,
+                        `Прибыль:  ${fmt(calc.profit)} ₸`,
+                        `Маржа:    ${fmtP(calc.margin)}%`,
+                        `ДРР:      ${fmtP(calc.drr)}%`,
+                      ].join('\n');
+                      navigator.clipboard.writeText(txt).then(() => alert('Скопировано!'));
+                    }}>📋</button>
+                </div>
               </div>
             </div>
           </div>
@@ -1848,14 +1996,15 @@ export default function App() {
 
         {appTab === 'history' && (
           <HistoryPanel
-            history={history} users={users} cabs={cabs}
+            history={history} setHist={setHist} users={users} cabs={cabs}
             isAdmin={isAdmin} userLogin={user.login}
             onDelete={async id => { await api.deleteRecord(id); setHist(h => h.filter(r => r.id !== id)); }}
             onClear={async () => { await api.clearHistory(); setHist([]); }}
           />
         )}
 
-        {appTab === 'company' && <CompanyDashboard history={history} users={users} cabs={cabs} />}
+        {appTab === 'company' && <CompanyDashboard history={history} users={users} cabs={cabs}
+          revenueGoal={revenueGoal} setRevenueGoal={g => { setRevenueGoal(g); localStorage.setItem('wb_rev_goal', g); }} />}
 
         {appTab === 'report' && (
           <ReportPanel history={history} users={users} allCabs={allCabs}

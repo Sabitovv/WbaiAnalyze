@@ -215,6 +215,15 @@ app.post('/api/history', async (req, res) => {
   res.json(rows[0]);
 });
 
+app.put('/api/history/:id', async (req, res) => {
+  const { date, cabinet, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE history SET date=$1,cabinet=$2,rev=$3,ads=$4,cost=$5,comm=$6,log_f=$7,log_r=$8,ret=$9,profit=$10,margin=$11,drr=$12 WHERE id=$13 RETURNING *`,
+    [date, cabinet, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, req.params.id]
+  );
+  res.json(rows[0]);
+});
+
 app.delete('/api/history/:id', async (req, res) => {
   await pool.query(`DELETE FROM history WHERE id=$1`, [req.params.id]);
   res.json({ ok: true });
