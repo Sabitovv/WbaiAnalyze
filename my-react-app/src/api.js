@@ -25,10 +25,17 @@ export const api = {
 
   getUserCabs:    (userId)          => req('GET',  `/user-cabs/${userId}`),
   setUserCabs:    (userId, cab_ids) => req('PUT',  `/user-cabs/${userId}`, { cab_ids }),
+  setSalary:      (userId, pct)     => req('PUT',  `/users/${userId}/salary`, { salary_pct: pct }),
 
-  getCabs:      ()       => req('GET',    '/cabs'),
-  addCab:       (name)   => req('POST',   '/cabs', { name }),
-  deleteCab:    (id)     => req('DELETE', `/cabs/${id}`),
+  getTeams:       ()                => req('GET',    '/teams'),
+  addTeam:        (name)            => req('POST',   '/teams', { name }),
+  deleteTeam:     (id)              => req('DELETE', `/teams/${id}`),
+  setTeamMembers: (id, user_ids)    => req('PUT',    `/teams/${id}/members`, { user_ids }),
+
+  getCabs:      ()              => req('GET',    '/cabs'),
+  addCab:       (name, buyout) => req('POST',   '/cabs', { name, buyout }),
+  updateCab:    (id, data)     => req('PUT',    `/cabs/${id}`, data),
+  deleteCab:    (id)           => req('DELETE', `/cabs/${id}`),
 
   getHistory:   ()       => req('GET',    '/history'),
   addHistory:   (rec)    => req('POST',   '/history', rec),

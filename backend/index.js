@@ -17,6 +17,20 @@ pool.query(`
   )
 `).catch(e => console.error('user_cabs init error:', e.message));
 
+pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS salary_pct NUMERIC DEFAULT 0`)
+  .catch(e => console.error('salary_pct init error:', e.message));
+
+pool.query(`CREATE TABLE IF NOT EXISTS teams (
+  id   SERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE
+)`).catch(e => console.error('teams init error:', e.message));
+
+pool.query(`CREATE TABLE IF NOT EXISTS team_members (
+  team_id INTEGER REFERENCES teams(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (team_id, user_id)
+)`).catch(e => console.error('team_members init error:', e.message));
+
 // ── Курс RUB/KZT ─────────────────────────────────────────────────────────────
 app.get('/api/rate', async (_req, res) => {
   try {
@@ -73,7 +87,7 @@ app.post('/api/auth/register', async (req, res) => {
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 app.get('/api/users', async (_req, res) => {
-  const { rows } = await pool.query(`SELECT id,login,name,role,created_at FROM users ORDER BY id`);
+  const { rows } = await pool.query(`SELECT id,login,name,role,salary_pct,created_at FROM users ORDER BY id`);
   const { rows: cabRows } = await pool.query(`SELECT user_id, cab_id FROM user_cabs`);
   const cabMap = {};
   cabRows.forEach(r => {
@@ -160,14 +174,24 @@ app.get('/api/cabs', async (_req, res) => {
 
 app.post('/api/cabs', async (req, res) => {
   try {
+    const { name, buyout = 88 } = req.body;
     const { rows } = await pool.query(
-      `INSERT INTO cabs (name) VALUES ($1) RETURNING *`, [req.body.name]
+      `INSERT INTO cabs (name, buyout) VALUES ($1,$2) RETURNING *`, [name, buyout]
     );
     res.json(rows[0]);
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'Уже существует' });
     res.status(500).json({ error: e.message });
   }
+});
+
+app.put('/api/cabs/:id', async (req, res) => {
+  const { name, buyout } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE cabs SET name=COALESCE($1,name), buyout=COALESCE($2,buyout) WHERE id=$3 RETURNING *`,
+    [name, buyout, req.params.id]
+  );
+  res.json(rows[0]);
 });
 
 app.delete('/api/cabs/:id', async (req, res) => {
@@ -198,6 +222,48 @@ app.delete('/api/history/:id', async (req, res) => {
 
 app.delete('/api/history', async (_req, res) => {
   await pool.query(`DELETE FROM history`);
+  res.json({ ok: true });
+});
+
+// ── Teams ─────────────────────────────────────────────────────────────────────
+app.get('/api/teams', async (_req, res) => {
+  const { rows: teams } = await pool.query(`SELECT * FROM teams ORDER BY id`);
+  const { rows: members } = await pool.query(`SELECT team_id, user_id FROM team_members`);
+  const map = {};
+  members.forEach(m => { if (!map[m.team_id]) map[m.team_id] = []; map[m.team_id].push(m.user_id); });
+  res.json(teams.map(t => ({ ...t, member_ids: map[t.id] || [] })));
+});
+app.post('/api/teams', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`INSERT INTO teams (name) VALUES ($1) RETURNING *`, [req.body.name]);
+    res.json({ ...rows[0], member_ids: [] });
+  } catch (e) {
+    if (e.code === '23505') return res.status(409).json({ error: 'Команда уже существует' });
+    res.status(500).json({ error: e.message });
+  }
+});
+app.delete('/api/teams/:id', async (req, res) => {
+  await pool.query(`DELETE FROM teams WHERE id=$1`, [req.params.id]);
+  res.json({ ok: true });
+});
+app.put('/api/teams/:id/members', async (req, res) => {
+  const { user_ids = [] } = req.body;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`DELETE FROM team_members WHERE team_id=$1`, [req.params.id]);
+    for (const uid of user_ids)
+      await client.query(`INSERT INTO team_members (team_id,user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [req.params.id, uid]);
+    await client.query('COMMIT');
+    res.json({ ok: true, user_ids });
+  } catch (e) { await client.query('ROLLBACK'); res.status(500).json({ error: e.message }); }
+  finally { client.release(); }
+});
+
+// ── Salary rate ───────────────────────────────────────────────────────────────
+app.put('/api/users/:id/salary', async (req, res) => {
+  const { salary_pct } = req.body;
+  await pool.query(`UPDATE users SET salary_pct=$1 WHERE id=$2`, [salary_pct, req.params.id]);
   res.json({ ok: true });
 });
 
