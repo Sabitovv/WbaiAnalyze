@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sait_db}
+      POSTGRES_USER: ${POSTGRES_USER:-sait_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sait_pass}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sait_user} -d ${POSTGRES_DB:-sait_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sait_user}:${POSTGRES_PASSWORD:-sait_pass}@db:5432/${POSTGRES_DB:-sait_db}
+      PGSSLMODE: disable
+      PORT: 3001
+    restart: unless-stopped
+
+  frontend:
+    build: ./my-react-app
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata:
