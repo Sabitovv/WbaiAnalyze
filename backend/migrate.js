@@ -11,6 +11,7 @@ async function migrate() {
         password TEXT NOT NULL,
         name TEXT,
         role TEXT NOT NULL DEFAULT 'employee',
+        salary_pct NUMERIC DEFAULT 0,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
@@ -26,7 +27,20 @@ async function migrate() {
 
       CREATE TABLE IF NOT EXISTS cabs (
         id SERIAL PRIMARY KEY,
-        name TEXT UNIQUE NOT NULL
+        name TEXT UNIQUE NOT NULL,
+        buyout INTEGER NOT NULL DEFAULT 88
+      );
+
+      CREATE TABLE IF NOT EXISTS teams (
+        id SERIAL PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS team_members (
+        team_id INTEGER REFERENCES teams(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        PRIMARY KEY (team_id, user_id)
       );
 
       CREATE TABLE IF NOT EXISTS history (
