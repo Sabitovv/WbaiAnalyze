@@ -77,7 +77,11 @@ function LoginScreen({ onLogin }) {
 
   const submitLogin = async e => {
     e.preventDefault(); reset(); setLoading(true);
-    try { onLogin(await api.login(login.trim(), pass)); }
+    try {
+      const u = await api.login(login.trim(), pass);
+      localStorage.setItem('wb_user', JSON.stringify(u));
+      onLogin(u);
+    }
     catch (e) { setErr(e.message); }
     finally { setLoading(false); }
   };
@@ -213,7 +217,7 @@ function ProdRow({ row, catalog, rate, coeff, isAdmin, onUpdate, onDel }) {
   const qty   = num(row.qty);
 
   return (
-    <div className="prod-row" style={{ gridTemplateColumns: isAdmin ? '1fr 60px 90px 60px 60px 90px 32px' : '1fr 80px 60px 90px 32px' }}>
+    <div className="prod-row" style={{ gridTemplateColumns: isAdmin ? '1fr 60px 90px 60px 60px 90px 32px' : '1fr 80px 32px' }}>
       <select value={row.product} className="form-input" style={{ fontSize: 12 }}
         onChange={e => onUpdate(row.id, 'product', e.target.value)}>
         {catalog.map(p => <option key={p.id}>{p.name}</option>)}
@@ -228,12 +232,16 @@ function ProdRow({ row, catalog, rate, coeff, isAdmin, onUpdate, onDel }) {
         <div style={{ textAlign: 'center', fontSize: 12, fontWeight: 600, color: 'var(--blue-txt)',
           background: 'var(--blue-bg)', borderRadius: 6, padding: '6px 4px' }}>{row.comm}%</div>
       )}
-      <div style={{ textAlign: 'center', fontSize: 11, color: lKzt === null ? 'var(--yellow-txt)' : 'var(--txt2)' }}>
-        {lKzt === null ? '—' : Math.round(lKzt)}
-      </div>
-      <div style={{ textAlign: 'right', fontSize: 12, color: 'var(--txt2)', fontWeight: 500 }}>
-        {lKzt === null ? '—' : fmt(qty * (lKzt ?? 0)) + ' ₸'}
-      </div>
+      {isAdmin && (
+        <div style={{ textAlign: 'center', fontSize: 11, color: lKzt === null ? 'var(--yellow-txt)' : 'var(--txt2)' }}>
+          {lKzt === null ? '—' : Math.round(lKzt)}
+        </div>
+      )}
+      {isAdmin && (
+        <div style={{ textAlign: 'right', fontSize: 12, color: 'var(--txt2)', fontWeight: 500 }}>
+          {lKzt === null ? '—' : fmt(qty * (lKzt ?? 0)) + ' ₸'}
+        </div>
+      )}
       <button className="prod-del" onClick={() => onDel(row.id)}>×</button>
     </div>
   );
@@ -420,10 +428,24 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
     setCatalog(c => c.filter(x => x.id !== id));
     setDelProdId(null);
   };
+  const [newCabBuyout, setNewCabBuyout] = useState(88);
+  const [editCab, setEditCab] = useState(null); // {id, name, buyout}
+
   const addCab = async () => {
     if (!newCab.trim()) return;
-    try { const c = await api.addCab(newCab.trim()); setCabs(x => [...x, c]); setNewCab(''); }
-    catch (e) { setErr(e.message); }
+    try {
+      const c = await api.addCab(newCab.trim(), newCabBuyout);
+      setCabs(x => [...x, c]);
+      setNewCab(''); setNewCabBuyout(88);
+    } catch (e) { setErr(e.message); }
+  };
+  const saveCab = async () => {
+    if (!editCab) return;
+    try {
+      const c = await api.updateCab(editCab.id, { name: editCab.name, buyout: +editCab.buyout });
+      setCabs(x => x.map(cab => cab.id === c.id ? c : cab));
+      setEditCab(null);
+    } catch (e) { setErr(e.message); }
   };
   const delCab = async id => { await api.deleteCab(id); setCabs(x => x.filter(c => c.id !== id)); };
   const addUser = async () => {
@@ -511,24 +533,76 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
           <div className="section-header" style={{ marginBottom: 16 }}>
             <div><div className="section-title">Кабинеты продавцов</div><div className="section-sub">{cabs.length} кабинетов</div></div>
           </div>
+
+          {/* Модалка редактирования кабинета */}
+          {editCab && (
+            <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setEditCab(null)}>
+              <div className="modal" style={{ maxWidth: 360 }}>
+                <div className="modal-header">
+                  <h2>Редактировать кабинет</h2>
+                  <button className="modal-close" onClick={() => setEditCab(null)}>×</button>
+                </div>
+                <div className="field" style={{ marginBottom: 14 }}>
+                  <label className="form-label">Название</label>
+                  <input className="form-input" value={editCab.name}
+                    onChange={e => setEditCab(x => ({ ...x, name: e.target.value }))} />
+                </div>
+                <div className="field" style={{ marginBottom: 20 }}>
+                  <label className="form-label">Процент выкупа, %</label>
+                  <input type="number" className="form-input" value={editCab.buyout} min="0" max="100"
+                    onChange={e => setEditCab(x => ({ ...x, buyout: e.target.value }))} />
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn btn-primary btn-lg" style={{ flex: 1 }} onClick={saveCab}>Сохранить</button>
+                  <button className="btn btn-lg" onClick={() => setEditCab(null)}>Отмена</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Добавить новый */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
             <input className="form-input" value={newCab} onChange={e => setNewCab(e.target.value)}
-              placeholder="Название нового кабинета" onKeyDown={e => e.key === 'Enter' && addCab()} style={{ flex: 1 }} />
-            <button className="btn btn-primary" style={{ padding: '8px 20px', whiteSpace: 'nowrap' }} onClick={addCab}>+ Добавить</button>
+              placeholder="Название кабинета" onKeyDown={e => e.key === 'Enter' && addCab()} style={{ flex: 1 }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              <span style={{ fontSize: 12, color: 'var(--txt2)', whiteSpace: 'nowrap' }}>Выкуп %</span>
+              <input type="number" className="form-input" value={newCabBuyout} min="0" max="100"
+                onChange={e => setNewCabBuyout(+e.target.value)} style={{ width: 70 }} />
+            </div>
+            <button className="btn btn-primary" style={{ whiteSpace: 'nowrap' }} onClick={addCab}>+ Добавить</button>
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {cabs.map(c => (
-              <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8,
-                background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)',
-                borderRadius: 20, padding: '6px 14px', fontSize: 13 }}>
-                <span>{c.name}</span>
-                <button onClick={() => delCab(c.id)} style={{ background: 'none', border: 'none',
-                  cursor: 'pointer', color: 'var(--txt3)', fontSize: 16, lineHeight: 1, padding: 0 }}
-                  onMouseEnter={e => e.target.style.color = 'var(--red-txt)'}
-                  onMouseLeave={e => e.target.style.color = 'var(--txt3)'}>×</button>
-              </div>
-            ))}
-          </div>
+
+          {/* Список */}
+          <table>
+            <thead><tr>
+              <th style={{ textAlign: 'left' }}>Кабинет</th>
+              <th style={{ textAlign: 'center' }}>Выкуп %</th>
+              <th></th>
+            </tr></thead>
+            <tbody>
+              {cabs.map(c => (
+                <tr key={c.id}>
+                  <td style={{ fontWeight: 500 }}>{c.name}</td>
+                  <td style={{ textAlign: 'center' }}>
+                    <span className="badge" style={{
+                      background: +c.buyout >= 85 ? 'var(--green-bg)' : +c.buyout >= 70 ? 'var(--yellow-bg)' : 'var(--red-bg)',
+                      color:      +c.buyout >= 85 ? 'var(--green-txt)' : +c.buyout >= 70 ? 'var(--yellow-txt)' : 'var(--red-txt)',
+                    }}>{c.buyout ?? 88}%</span>
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                      <button className="btn" style={{ padding: '3px 12px', fontSize: 11 }}
+                        onClick={() => setEditCab({ id: c.id, name: c.name, buyout: c.buyout ?? 88 })}>
+                        Изменить
+                      </button>
+                      <button className="btn btn-danger" style={{ padding: '3px 12px', fontSize: 11 }}
+                        onClick={() => delCab(c.id)}>Удалить</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -938,7 +1012,14 @@ function HistoryPanel({ history, users, cabs, isAdmin, userLogin, onDelete, onCl
               <tbody>
                 {filtered.map(h => (
                   <tr key={h.id}>
-                    <td style={{ whiteSpace: 'nowrap', color: 'var(--txt2)', fontSize: 12 }}>{h.date?.split('T')[0] || h.date}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <div style={{ fontSize: 12, color: 'var(--txt)' }}>{h.date?.split('T')[0] || h.date}</div>
+                      {h.created_at && (
+                        <div style={{ fontSize: 10, color: 'var(--txt3)', marginTop: 2 }}>
+                          {new Date(h.created_at).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      )}
+                    </td>
                     <td style={{ whiteSpace: 'nowrap', fontWeight: 500 }}>{h.cabinet}</td>
                     {isAdmin && (
                       <td>
@@ -980,7 +1061,10 @@ function HistoryPanel({ history, users, cabs, isAdmin, userLogin, onDelete, onCl
 
 // ── Главный компонент ─────────────────────────────────────────────────────────
 export default function App() {
-  const [user,    setUser]    = useState(null);
+  const [user,    setUser]    = useState(() => {
+    try { return JSON.parse(localStorage.getItem('wb_user') || 'null'); }
+    catch { return null; }
+  });
   const [users,   setUsers]   = useState([]);
   const [catalog, setCatalog] = useState([]);
   const [cabs,    setCabs]    = useState([]);   // кабинеты текущего пользователя
@@ -1018,7 +1102,10 @@ export default function App() {
           : cabList.filter(c => (user?.cab_ids || []).includes(c.id));
         setCabs(visibleCabs);
         const firstCab = visibleCabs[0] || (user?.role === 'admin' ? cabList[0] : null);
-        if (firstCab) setCab(firstCab.name);
+        if (firstCab) {
+          setCab(firstCab.name);
+          if (firstCab.buyout) setRet(+firstCab.buyout);
+        }
         if (cat.length) setRows([mkRow(cat[0])]);
         fetchRate();
       })
@@ -1127,7 +1214,7 @@ export default function App() {
               <div style={{ fontSize: 13, fontWeight: 500 }}>{user.name || user.login}</div>
               {isAdmin && <span className="badge badge-blue" style={{ fontSize: 10 }}>admin</span>}
             </div>
-            <button className="logout-btn" onClick={() => { setUser(null); setRows([]); setAppTab('calc'); }}>Выйти</button>
+            <button className="logout-btn" onClick={() => { localStorage.removeItem('wb_user'); setUser(null); setRows([]); setAppTab('calc'); }}>Выйти</button>
           </div>
         </div>
       </header>
@@ -1200,7 +1287,12 @@ export default function App() {
                     </div>
                     <div>
                       <label className="form-label">Кабинет</label>
-                      <select value={cabinet} onChange={e => setCab(e.target.value)} className="form-input">
+                      <select value={cabinet} className="form-input" onChange={e => {
+                        const name = e.target.value;
+                        setCab(name);
+                        const cab = (isAdmin ? allCabs : cabs).find(c => c.name === name);
+                        if (cab?.buyout) setRet(+cab.buyout);
+                      }}>
                         {cabs.map(c => <option key={c.id}>{c.name}</option>)}
                       </select>
                     </div>
@@ -1228,10 +1320,10 @@ export default function App() {
 
                 <div className="card" style={{ padding: '20px 24px' }}>
                   <div className="section-title" style={{ marginBottom: 12 }}>Товары</div>
-                  <div className="prod-row" style={{ marginBottom: 6, gridTemplateColumns: isAdmin ? '1fr 60px 90px 60px 60px 90px 32px' : '1fr 80px 60px 90px 32px' }}>
+                  <div className="prod-row" style={{ marginBottom: 6, gridTemplateColumns: isAdmin ? '1fr 60px 90px 60px 60px 90px 32px' : '1fr 80px 32px' }}>
                     {(isAdmin
                       ? ['Товар', 'Кол.', 'Себес. ₸', 'Ком.', '₸/шт', 'Лог. итого', '']
-                      : ['Товар', 'Кол.', '₸/шт', 'Лог. итого', '']
+                      : ['Товар', 'Кол.', '']
                     ).map((h, i) => (
                       <span key={i} style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
                         letterSpacing: '0.05em', color: 'var(--txt3)',

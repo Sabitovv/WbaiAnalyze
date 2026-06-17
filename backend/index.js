@@ -160,14 +160,24 @@ app.get('/api/cabs', async (_req, res) => {
 
 app.post('/api/cabs', async (req, res) => {
   try {
+    const { name, buyout = 88 } = req.body;
     const { rows } = await pool.query(
-      `INSERT INTO cabs (name) VALUES ($1) RETURNING *`, [req.body.name]
+      `INSERT INTO cabs (name, buyout) VALUES ($1,$2) RETURNING *`, [name, buyout]
     );
     res.json(rows[0]);
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'Уже существует' });
     res.status(500).json({ error: e.message });
   }
+});
+
+app.put('/api/cabs/:id', async (req, res) => {
+  const { name, buyout } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE cabs SET name=COALESCE($1,name), buyout=COALESCE($2,buyout) WHERE id=$3 RETURNING *`,
+    [name, buyout, req.params.id]
+  );
+  res.json(rows[0]);
 });
 
 app.delete('/api/cabs/:id', async (req, res) => {
