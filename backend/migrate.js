@@ -57,7 +57,6 @@ async function migrate() {
         `INSERT INTO users (login, password, name, role) VALUES ('admin', $1, 'Администратор', 'admin')`,
         [hash]
       );
-      console.log('Создан admin / admin123');
     }
 
     // Дефолтные товары
