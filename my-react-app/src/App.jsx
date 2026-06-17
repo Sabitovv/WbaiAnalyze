@@ -402,6 +402,38 @@ function TopEmployees({ history, users }) {
 }
 
 // ── Администратор ─────────────────────────────────────────────────────────────
+function SalaryInput({ userId, current, setUsers }) {
+  const [val, setVal] = useState(current ?? '');
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    const pct = parseFloat(val);
+    if (isNaN(pct) || pct < 0 || pct > 100) return;
+    setSaving(true);
+    try {
+      await api.setSalary(userId, pct);
+      setUsers(us => us.map(u => u.id === userId ? { ...u, salary_pct: pct } : u));
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
+      <input
+        type="number" min="0" max="100" step="0.5"
+        value={val} onChange={e => setVal(e.target.value)}
+        onBlur={save}
+        onKeyDown={e => e.key === 'Enter' && save()}
+        placeholder="0"
+        style={{ width: 52, textAlign: 'center', fontSize: 12,
+          background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)',
+          borderRadius: 6, padding: '3px 6px', color: 'var(--txt)', outline: 'none' }}
+      />
+      <span style={{ fontSize: 11, color: 'var(--txt3)' }}>%</span>
+      {saving && <span style={{ fontSize: 10, color: 'var(--blue-txt)' }}>...</span>}
+    </div>
+  );
+}
+
 function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCabs }) {
   const [tab,        setTab]        = useState('products');
   const [editProd,   setEditProd]   = useState(null);
@@ -693,6 +725,7 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
               <th style={{ textAlign: 'left' }}>Логин</th>
               <th>Роль</th>
               <th>Магазины</th>
+              <th>% ЗП</th>
               <th></th>
             </tr></thead>
             <tbody>
@@ -726,6 +759,13 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
                         </div>
                       ) : (
                         <span style={{ fontSize: 11, color: 'var(--red-txt)' }}>Нет доступа</span>
+                      )}
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      {u.role !== 'admin' ? (
+                        <SalaryInput userId={u.id} current={u.salary_pct} setUsers={setUsers} />
+                      ) : (
+                        <span style={{ fontSize: 11, color: 'var(--txt3)' }}>—</span>
                       )}
                     </td>
                     <td style={{ textAlign: 'right' }}>
@@ -1059,6 +1099,460 @@ function HistoryPanel({ history, users, cabs, isAdmin, userLogin, onDelete, onCl
   );
 }
 
+// ── Отчёт по выкупам + ЗП ────────────────────────────────────────────────────
+function ReportPanel({ history, users, allCabs, isAdmin, userLogin }) {
+  const [period,   setPeriod]   = useState('month');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo,   setDateTo]   = useState('');
+
+  const visible = isAdmin ? history : history.filter(h => h.user_login === userLogin);
+
+  const filtered = useMemo(() =>
+    filterByRange(visible, 'date', { period, dateFrom, dateTo }),
+    [visible, period, dateFrom, dateTo]);
+
+  // Выкупы = выручка − комиссия − логистика − возвраты − реклама
+  const rowBuyouts = r => {
+    const rev  = parseFloat(r.rev)   || 0;
+    const comm = parseFloat(r.comm)  || 0;
+    const logF = parseFloat(r.log_f) || 0;
+    const logR = parseFloat(r.log_r) || 0;
+    const ret  = parseFloat(r.ret)   || 0;
+    const ads  = parseFloat(r.ads)   || 0;
+    return rev - comm - logF - logR - ret - ads;
+  };
+
+  // Данные по кабинетам
+  const byCab = useMemo(() => {
+    const map = {};
+    filtered.forEach(r => {
+      const k = r.cabinet || '—';
+      if (!map[k]) map[k] = { rev: 0, buyoutsSum: 0, profit: 0, ads: 0, cost: 0, comm: 0, logF: 0, logR: 0, ret: 0, cnt: 0, days: new Set() };
+      map[k].rev       += parseFloat(r.rev)    || 0;
+      map[k].buyoutsSum+= rowBuyouts(r);
+      map[k].profit    += parseFloat(r.profit) || 0;
+      map[k].ads       += parseFloat(r.ads)    || 0;
+      map[k].cost      += parseFloat(r.cost)   || 0;
+      map[k].comm      += parseFloat(r.comm)   || 0;
+      map[k].logF      += parseFloat(r.log_f)  || 0;
+      map[k].logR      += parseFloat(r.log_r)  || 0;
+      map[k].ret       += parseFloat(r.ret)    || 0;
+      map[k].cnt++;
+      if (r.date) map[k].days.add(r.date);
+    });
+    return Object.entries(map).map(([name, m]) => {
+      const cab = allCabs.find(c => c.name === name);
+      const days = m.days.size || 1;
+      return {
+        name, ...m,
+        buyoutPct: cab?.buyout ?? '—',
+        margin:    m.rev > 0 ? m.profit     / m.rev * 100 : 0,
+        marginB:   m.buyoutsSum > 0 ? m.profit / m.buyoutsSum * 100 : 0,
+        drr:       m.rev > 0 ? m.ads        / m.rev * 100 : 0,
+        dailyRev:  m.rev / days,
+        dailyB:    m.buyoutsSum / days,
+      };
+    }).sort((a, b) => b.buyoutsSum - a.buyoutsSum);
+  }, [filtered, allCabs]);
+
+  // Суммарные итоги
+  const totals = useMemo(() => {
+    const t = { rev: 0, buyoutsSum: 0, profit: 0, ads: 0, cost: 0, comm: 0, logF: 0, logR: 0, ret: 0 };
+    filtered.forEach(r => {
+      t.rev       += parseFloat(r.rev)    || 0;
+      t.buyoutsSum+= rowBuyouts(r);
+      t.profit    += parseFloat(r.profit) || 0;
+      t.ads       += parseFloat(r.ads)    || 0;
+      t.cost      += parseFloat(r.cost)   || 0;
+      t.comm      += parseFloat(r.comm)   || 0;
+      t.logF      += parseFloat(r.log_f)  || 0;
+      t.logR      += parseFloat(r.log_r)  || 0;
+      t.ret       += parseFloat(r.ret)    || 0;
+    });
+    t.drr    = t.rev > 0 ? t.ads    / t.rev * 100 : 0;
+    t.margin = t.rev > 0 ? t.profit / t.rev * 100 : 0;
+    return t;
+  }, [filtered]);
+
+  // ЗП
+  const salaryRows = useMemo(() => {
+    const calc = recs => recs.reduce((s, r) => s + rowBuyouts(r), 0);
+    if (!isAdmin) {
+      const u = users.find(u => u.login === userLogin);
+      if (!u) return [];
+      const myRecs = filtered.filter(r => r.user_login === userLogin);
+      const buyouts = calc(myRecs);
+      const rev = myRecs.reduce((s, r) => s + (parseFloat(r.rev) || 0), 0);
+      const pct = parseFloat(u.salary_pct) || 0;
+      return [{ ...u, buyouts, rev, salary: buyouts * pct / 100, pct }];
+    }
+    return users.filter(u => u.role !== 'admin').map(u => {
+      const recs = filtered.filter(r => r.user_login === u.login);
+      const buyouts = calc(recs);
+      const rev = recs.reduce((s, r) => s + (parseFloat(r.rev) || 0), 0);
+      const pct = parseFloat(u.salary_pct) || 0;
+      return { ...u, buyouts, rev, salary: buyouts * pct / 100, pct };
+    }).sort((a, b) => b.buyouts - a.buyouts);
+  }, [filtered, users, isAdmin, userLogin]);
+
+  // Бар-чарт SVG
+  const maxB = Math.max(...byCab.map(c => Math.abs(c.buyoutsSum)), 1);
+  const BAR_H = 160, BAR_W = Math.max(48, Math.min(80, Math.floor(700 / (byCab.length || 1)) - 16));
+
+  return (
+    <div className="fade-in">
+      <FilterBar period={period} setPeriod={setPeriod}
+        dateFrom={dateFrom} setDateFrom={setDateFrom}
+        dateTo={dateTo} setDateTo={setDateTo} />
+
+      {filtered.length === 0 ? (
+        <div className="card"><div className="empty"><div className="empty-icon">📦</div>Нет данных за период</div></div>
+      ) : (
+        <>
+          {/* ── Таблица по кабинетам ── */}
+          <div className="card" style={{ padding: '20px 24px', marginBottom: 16 }}>
+            <div className="section-title" style={{ marginBottom: 16 }}>Отчёт по выкупам</div>
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead><tr>
+                  <th style={{ textAlign: 'left' }}>Кабинет</th>
+                  <th style={{ textAlign: 'right' }}>Выкупы за период</th>
+                  <th style={{ textAlign: 'right' }}>Маржа %</th>
+                  <th style={{ textAlign: 'right' }}>В среднем за день</th>
+                  <th style={{ textAlign: 'right' }}>ДРР %</th>
+                  <th style={{ textAlign: 'right' }}>Выкуп %</th>
+                </tr></thead>
+                <tbody>
+                  {byCab.map((c, i) => (
+                    <tr key={c.name}>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 12, color: 'var(--txt3)', minWidth: 16 }}>{i + 1}</span>
+                          <span style={{ fontWeight: 600 }}>{c.name}</span>
+                        </div>
+                      </td>
+                      <td style={{ textAlign: 'right', fontWeight: 700, fontSize: 15,
+                        color: c.buyoutsSum >= 0 ? 'var(--green-txt)' : 'var(--red-txt)' }}>
+                        {fmt(c.buyoutsSum)} ₸
+                      </td>
+                      <td style={{ textAlign: 'right', color: kpiColor('margin', c.margin) }}>
+                        {c.margin >= 0 ? '+' : ''}{fmtP(c.margin)}%
+                      </td>
+                      <td style={{ textAlign: 'right', color: 'var(--blue-txt)' }}>
+                        {fmt(c.dailyB)} ₸
+                      </td>
+                      <td style={{ textAlign: 'right', color: kpiColor('drr', c.drr) }}>
+                        {fmtP(c.drr)}%
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <span className="badge" style={{
+                          background: +c.buyoutPct >= 85 ? 'var(--green-bg)' : +c.buyoutPct >= 70 ? 'var(--yellow-bg)' : 'var(--red-bg)',
+                          color:      +c.buyoutPct >= 85 ? 'var(--green-txt)' : +c.buyoutPct >= 70 ? 'var(--yellow-txt)' : 'var(--red-txt)',
+                        }}>{c.buyoutPct}%</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* ── Бар-чарт ── */}
+          {byCab.length > 0 && (
+            <div className="card" style={{ padding: '20px 24px', marginBottom: 16, overflowX: 'auto' }}>
+              <div className="section-title" style={{ marginBottom: 20 }}>График выкупов по кабинетам</div>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, minWidth: byCab.length * (BAR_W + 12), paddingBottom: 48, position: 'relative' }}>
+                {/* нулевая линия */}
+                <div style={{ position: 'absolute', bottom: 48, left: 0, right: 0,
+                  borderTop: '1px dashed rgba(255,255,255,0.1)' }} />
+                {byCab.map(c => {
+                  const pct = Math.abs(c.buyoutsSum) / maxB;
+                  const h = Math.max(4, pct * BAR_H);
+                  const isNeg = c.buyoutsSum < 0;
+                  const mPct = c.margin;
+                  return (
+                    <div key={c.name} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, width: BAR_W }}>
+                      <div style={{ fontSize: 11, fontWeight: 700,
+                        color: isNeg ? 'var(--red-txt)' : mPct >= 20 ? 'var(--green-txt)' : mPct >= 10 ? 'var(--yellow-txt)' : 'var(--txt2)' }}>
+                        {mPct >= 0 ? '+' : ''}{fmtP(mPct)}%
+                      </div>
+                      <div style={{
+                        width: '100%', height: h,
+                        background: isNeg
+                          ? 'linear-gradient(180deg, var(--red-bg) 0%, rgba(239,68,68,0.6) 100%)'
+                          : 'linear-gradient(180deg, rgba(79,124,255,0.9) 0%, rgba(79,124,255,0.5) 100%)',
+                        borderRadius: '6px 6px 0 0',
+                        border: `1px solid ${isNeg ? 'rgba(239,68,68,0.4)' : 'rgba(79,124,255,0.4)'}`,
+                        position: 'relative',
+                      }} />
+                      <div style={{ fontSize: 10, color: 'var(--txt3)', textAlign: 'center',
+                        position: 'absolute', bottom: 0, width: BAR_W,
+                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {c.name}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ── Сводка итогов ── */}
+          <div className="card" style={{ padding: '20px 24px', marginBottom: 16 }}>
+            <div className="section-title" style={{ marginBottom: 16 }}>Сводка за период</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
+              {[
+                { l: 'Выручка',       v: fmt(totals.rev)       + ' ₸', col: 'var(--blue-txt)',   bg: 'var(--blue-bg)' },
+                { l: 'Выкупы',        v: fmt(totals.buyoutsSum)+ ' ₸', col: 'var(--green-txt)',  bg: 'var(--green-bg)' },
+                { l: 'Реклама',       v: fmt(totals.ads)       + ' ₸', col: 'var(--yellow-txt)', bg: 'var(--yellow-bg)' },
+                { l: 'ДРР %',         v: fmtP(totals.drr)      + '%',  col: 'var(--yellow-txt)', bg: 'var(--yellow-bg)' },
+                { l: 'Себестоимость', v: fmt(totals.cost)      + ' ₸', col: 'var(--red-txt)',    bg: 'var(--red-bg)' },
+                { l: 'Комиссия ВБ',   v: fmt(totals.comm)      + ' ₸', col: 'var(--red-txt)',    bg: 'var(--red-bg)' },
+                { l: 'Логистика',     v: fmt(totals.logF + totals.logR) + ' ₸', col: 'var(--red-txt)', bg: 'var(--red-bg)' },
+                { l: 'Возвраты',      v: fmt(totals.ret)       + ' ₸', col: 'var(--red-txt)',    bg: 'var(--red-bg)' },
+                { l: 'Прибыль',       v: fmt(totals.profit)    + ' ₸', col: kpiColor('profit', totals.profit), bg: totals.profit >= 0 ? 'var(--green-bg)' : 'var(--red-bg)' },
+                { l: 'Маржа %',       v: fmtP(totals.margin)   + '%',  col: kpiColor('margin', totals.margin), bg: totals.margin >= 15 ? 'var(--green-bg)' : totals.margin >= 5 ? 'var(--yellow-bg)' : 'var(--red-bg)' },
+              ].map(k => (
+                <div key={k.l} style={{ background: k.bg, borderRadius: 10, padding: '14px 16px',
+                  border: `1px solid ${k.col}22` }}>
+                  <div style={{ fontSize: 11, color: 'var(--txt3)', marginBottom: 6 }}>{k.l}</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: k.col }}>{k.v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Команды ───────────────────────────────────────────────────────────────────
+function TeamsPanel({ teams, setTeams, users, history }) {
+  const [period,      setPeriod]      = useState('month');
+  const [dateFrom,    setDateFrom]    = useState('');
+  const [dateTo,      setDateTo]      = useState('');
+  const [newTeamName, setNewTeamName] = useState('');
+  const [editTeam,    setEditTeam]    = useState(null); // команда для редактирования участников
+  const [err,         setErr]         = useState('');
+
+  const addTeam = async () => {
+    if (!newTeamName.trim()) return;
+    try {
+      const t = await api.addTeam(newTeamName.trim());
+      setTeams(x => [...x, t]);
+      setNewTeamName('');
+    } catch (e) { setErr(e.message); }
+  };
+
+  const delTeam = async id => {
+    await api.deleteTeam(id);
+    setTeams(x => x.filter(t => t.id !== id));
+  };
+
+  const toggleMember = async (teamId, userId) => {
+    const team = teams.find(t => t.id === teamId);
+    const current = team?.member_ids || [];
+    const next = current.includes(userId) ? current.filter(x => x !== userId) : [...current, userId];
+    await api.setTeamMembers(teamId, next);
+    setTeams(ts => ts.map(t => t.id === teamId ? { ...t, member_ids: next } : t));
+  };
+
+  const filtered = useMemo(() =>
+    filterByRange(history, 'date', { period, dateFrom, dateTo }),
+    [history, period, dateFrom, dateTo]);
+
+  // Статистика по командам
+  const teamStats = useMemo(() => {
+    return teams.map(team => {
+      const logins = (team.member_ids || [])
+        .map(id => users.find(u => u.id === id)?.login).filter(Boolean);
+      const recs = filtered.filter(r => logins.includes(r.user_login));
+      const rev    = recs.reduce((s, r) => s + (parseFloat(r.rev)    || 0), 0);
+      const profit = recs.reduce((s, r) => s + (parseFloat(r.profit) || 0), 0);
+      const ads    = recs.reduce((s, r) => s + (parseFloat(r.ads)    || 0), 0);
+      return { ...team, rev, profit, ads,
+        margin: rev > 0 ? profit / rev * 100 : 0,
+        drr:    rev > 0 ? ads    / rev * 100 : 0,
+        cnt: recs.length, logins };
+    }).sort((a, b) => b.rev - a.rev);
+  }, [teams, filtered, users]);
+
+  const medals = ['🥇', '🥈', '🥉'];
+  const employees = users.filter(u => u.role !== 'admin');
+
+  return (
+    <div className="fade-in">
+      <FilterBar period={period} setPeriod={setPeriod}
+        dateFrom={dateFrom} setDateFrom={setDateFrom}
+        dateTo={dateTo} setDateTo={setDateTo} />
+
+      {/* Модалка участников */}
+      {editTeam && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setEditTeam(null)}>
+          <div className="modal" style={{ maxWidth: 420 }}>
+            <div className="modal-header">
+              <h2>Участники — {editTeam.name}</h2>
+              <button className="modal-close" onClick={() => setEditTeam(null)}>×</button>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--txt3)', marginBottom: 14 }}>
+              Выберите сотрудников команды:
+            </div>
+            {employees.length === 0 ? (
+              <div style={{ color: 'var(--txt3)', fontSize: 13 }}>Нет сотрудников</div>
+            ) : employees.map(u => {
+              const checked = (editTeam.member_ids || []).includes(u.id);
+              return (
+                <label key={u.id} onClick={async () => {
+                  await toggleMember(editTeam.id, u.id);
+                  setEditTeam(t => ({
+                    ...t, member_ids: checked
+                      ? t.member_ids.filter(x => x !== u.id)
+                      : [...t.member_ids, u.id]
+                  }));
+                }} style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
+                  marginBottom: 6, borderRadius: 8, cursor: 'pointer',
+                  background: checked ? 'var(--blue-bg)' : 'rgba(255,255,255,0.03)',
+                  border: `1px solid ${checked ? 'rgba(79,124,255,0.35)' : 'var(--border)'}`,
+                }}>
+                  <div style={{ width: 18, height: 18, borderRadius: 5, flexShrink: 0,
+                    border: `2px solid ${checked ? 'var(--blue)' : 'var(--border)'}`,
+                    background: checked ? 'var(--blue)' : 'transparent',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 11, color: '#fff', fontWeight: 700 }}>{checked ? '✓' : ''}</div>
+                  <div className="avatar" style={{ width: 24, height: 24, fontSize: 9 }}>{initials(u.name || u.login)}</div>
+                  <span style={{ fontSize: 13, fontWeight: checked ? 600 : 400 }}>{u.name || u.login}</span>
+                </label>
+              );
+            })}
+            <button className="btn btn-primary btn-full" style={{ marginTop: 16 }}
+              onClick={() => setEditTeam(null)}>Готово</button>
+          </div>
+        </div>
+      )}
+
+      {err && <div className="err-msg" style={{ marginBottom: 12 }}>{err}</div>}
+
+      {/* Создать команду */}
+      <div className="card" style={{ padding: '16px 20px', marginBottom: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
+        <input className="form-input" value={newTeamName} onChange={e => setNewTeamName(e.target.value)}
+          placeholder="Название новой команды" onKeyDown={e => e.key === 'Enter' && addTeam()}
+          style={{ flex: 1 }} />
+        <button className="btn btn-primary" style={{ whiteSpace: 'nowrap' }} onClick={addTeam}>+ Создать команду</button>
+      </div>
+
+      {teams.length === 0 ? (
+        <div className="card"><div className="empty"><div className="empty-icon">👥</div>Создайте первую команду</div></div>
+      ) : (
+        <>
+          {/* Лидерборд карточки */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12, marginBottom: 16 }}>
+            {teamStats.map((team, i) => (
+              <div key={team.id} className="card" style={{
+                padding: '20px 24px',
+                border: i === 0 && team.rev > 0 ? '1px solid rgba(245,158,11,0.3)' : undefined,
+                background: i === 0 && team.rev > 0 ? 'rgba(245,158,11,0.04)' : undefined,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 700 }}>
+                      {team.rev > 0 && medals[i] ? medals[i] + ' ' : ''}{team.name}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--txt3)', marginTop: 3 }}>
+                      {team.logins.length} участников · {team.cnt} записей
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button className="btn" style={{ padding: '3px 10px', fontSize: 11 }}
+                      onClick={() => setEditTeam(teams.find(t => t.id === team.id))}>
+                      👥 Участники
+                    </button>
+                    <button className="btn btn-danger" style={{ padding: '3px 10px', fontSize: 11 }}
+                      onClick={() => delTeam(team.id)}>×</button>
+                  </div>
+                </div>
+
+                <div style={{ fontSize: 24, fontWeight: 800, color: kpiColor('profit', team.profit),
+                  letterSpacing: '-0.02em', marginBottom: 8 }}>
+                  {fmt(team.profit)} ₸
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--txt2)', marginBottom: 12 }}>
+                  Выручка: <span style={{ color: 'var(--blue-txt)', fontWeight: 600 }}>{fmt(team.rev)} ₸</span>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  {[
+                    { l: 'Маржа', v: fmtP(team.margin) + '%', col: kpiColor('margin', team.margin) },
+                    { l: 'ДРР',   v: fmtP(team.drr) + '%',    col: kpiColor('drr', team.drr) },
+                  ].map(k => (
+                    <div key={k.l} style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 8,
+                      padding: '8px 10px', textAlign: 'center', border: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: k.col }}>{k.v}</div>
+                      <div style={{ fontSize: 10, color: 'var(--txt3)' }}>{k.l}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Участники */}
+                {team.logins.length > 0 && (
+                  <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {team.member_ids.map(id => {
+                      const u = users.find(u => u.id === id);
+                      return u ? (
+                        <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 5,
+                          background: 'rgba(255,255,255,0.05)', borderRadius: 20,
+                          padding: '3px 10px 3px 4px', fontSize: 11 }}>
+                          <div className="avatar" style={{ width: 18, height: 18, fontSize: 8 }}>{initials(u.name || u.login)}</div>
+                          {u.name || u.login}
+                        </div>
+                      ) : null;
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Сравнительная таблица */}
+          {teamStats.some(t => t.rev > 0) && (
+            <div className="card" style={{ padding: '20px 24px' }}>
+              <div className="section-title" style={{ marginBottom: 16 }}>Сравнение команд</div>
+              <table>
+                <thead><tr>
+                  <th style={{ textAlign: 'left' }}>#</th>
+                  <th style={{ textAlign: 'left' }}>Команда</th>
+                  <th>Участников</th>
+                  <th>Выручка</th>
+                  <th>Прибыль</th>
+                  <th>Маржа</th>
+                  <th>ДРР</th>
+                </tr></thead>
+                <tbody>
+                  {teamStats.map((t, i) => (
+                    <tr key={t.id}>
+                      <td style={{ fontWeight: 700, color: i === 0 ? 'var(--yellow-txt)' : 'var(--txt3)' }}>
+                        {medals[i] || i + 1}
+                      </td>
+                      <td style={{ fontWeight: 600 }}>{t.name}</td>
+                      <td style={{ textAlign: 'center', color: 'var(--txt2)' }}>{t.logins.length}</td>
+                      <td style={{ textAlign: 'right', color: 'var(--blue-txt)', fontWeight: 600 }}>{fmt(t.rev)}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 700, color: kpiColor('profit', t.profit) }}>{fmt(t.profit)}</td>
+                      <td style={{ textAlign: 'right', color: kpiColor('margin', t.margin) }}>{fmtP(t.margin)}%</td>
+                      <td style={{ textAlign: 'right', color: kpiColor('drr', t.drr) }}>{fmtP(t.drr)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Главный компонент ─────────────────────────────────────────────────────────
 export default function App() {
   const [user,    setUser]    = useState(() => {
@@ -1070,6 +1564,7 @@ export default function App() {
   const [cabs,    setCabs]    = useState([]);   // кабинеты текущего пользователя
   const [allCabs, setAllCabs] = useState([]);   // все кабинеты (для админа)
   const [history, setHist]    = useState([]);
+  const [teams,   setTeams]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [appTab,  setAppTab]  = useState('calc');
 
@@ -1091,12 +1586,13 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     setLoading(true);
-    Promise.all([api.getCatalog(), api.getCabs(), api.getHistory(), api.getUsers()])
-      .then(([cat, cabList, hist, userList]) => {
+    Promise.all([api.getCatalog(), api.getCabs(), api.getHistory(), api.getUsers(), api.getTeams()])
+      .then(([cat, cabList, hist, userList, teamList]) => {
         setCatalog(cat);
         setAllCabs(cabList);
         setHist(hist);
         setUsers(userList);
+        setTeams(teamList);
         // Сотрудник видит только назначенные ему кабинеты
         const visibleCabs = user?.role === 'admin' ? cabList
           : cabList.filter(c => (user?.cab_ids || []).includes(c.id));
@@ -1183,6 +1679,8 @@ export default function App() {
     { k: 'calc',    l: 'Калькулятор' },
     { k: 'history', l: 'История' },
     { k: 'company', l: 'Компания' },
+    { k: 'report',  l: 'Отчёт' },
+    { k: 'teams',   l: 'Команды' },
     ...(isAdmin ? [{ k: 'admin', l: 'Администратор' }] : []),
   ];
 
@@ -1362,6 +1860,15 @@ export default function App() {
         )}
 
         {appTab === 'company' && <CompanyDashboard history={history} users={users} cabs={cabs} />}
+
+        {appTab === 'report' && (
+          <ReportPanel history={history} users={users} allCabs={allCabs}
+            isAdmin={isAdmin} userLogin={user.login} />
+        )}
+
+        {appTab === 'teams' && (
+          <TeamsPanel teams={teams} setTeams={setTeams} users={users} history={history} />
+        )}
 
         {appTab === 'admin' && isAdmin && (
           <AdminPanel catalog={catalog} setCatalog={setCatalog}
