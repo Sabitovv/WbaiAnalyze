@@ -762,11 +762,7 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
                       )}
                     </td>
                     <td style={{ textAlign: 'center' }}>
-                      {u.role !== 'admin' ? (
-                        <SalaryInput userId={u.id} current={u.salary_pct} setUsers={setUsers} />
-                      ) : (
-                        <span style={{ fontSize: 11, color: 'var(--txt3)' }}>—</span>
-                      )}
+                      <SalaryInput userId={u.id} current={u.salary_pct} setUsers={setUsers} />
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
@@ -1186,13 +1182,13 @@ function ReportPanel({ history, users, allCabs, isAdmin, userLogin }) {
       const pct = parseFloat(u.salary_pct) || 0;
       return [{ ...u, buyouts, rev, salary: buyouts * pct / 100, pct }];
     }
-    return users.filter(u => u.role !== 'admin').map(u => {
+    return users.map(u => {
       const recs = filtered.filter(r => r.user_login === u.login);
       const buyouts = calc(recs);
       const rev = recs.reduce((s, r) => s + (parseFloat(r.rev) || 0), 0);
       const pct = parseFloat(u.salary_pct) || 0;
       return { ...u, buyouts, rev, salary: buyouts * pct / 100, pct };
-    }).sort((a, b) => b.buyouts - a.buyouts);
+    }).filter(u => u.rev > 0).sort((a, b) => b.buyouts - a.buyouts);
   }, [filtered, users, isAdmin, userLogin]);
 
   // Бар-чарт SVG
@@ -1380,7 +1376,7 @@ function TeamsPanel({ teams, setTeams, users, history }) {
   }, [teams, filtered, users]);
 
   const medals = ['🥇', '🥈', '🥉'];
-  const employees = users.filter(u => u.role !== 'admin');
+  const employees = users;
 
   return (
     <div className="fade-in">
