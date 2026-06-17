@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:3456)",
+      "Bash(curl -s http://localhost:3456/)",
+      "mcp__visualize__read_me",
+      "mcp__visualize__show_widget",
+      "Bash(mkdir -p /Users/bainazarnurbek/Downloads/САЙТ/backend)",
+      "Bash(npm init *)",
+      "Bash(npm install *)",
+      "Bash(node migrate.js)",
+      "Bash(pkill -f \"vite --port 3456\")",
+      "Bash(pkill -f \"node index.js\")",
+      "Bash(node index.js)",
+      "Bash(curl -s http://localhost:3001/api/cabs)",
+      "Bash(mkdir -p /Users/bainazarnurbek/Downloads/САЙТ/my-react-app/.claude)",
+      "Bash(mkdir -p /Users/bainazarnurbek/Downloads/САЙТ/.claude)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(curl -s -X POST http://localhost:3001/api/auth/login -H 'Content-Type: application/json' -d '{\"login\":\"admin\",\"password\":\"admin123\"}')",
+      "Bash(curl -s http://localhost:3001/api/rate)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('cab_ids:', d.get\\('cab_ids'\\)\\)\")",
+      "Bash(curl -s http://localhost:3001/api/users)",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s -X PUT http://localhost:3001/api/user-cabs/2 -H 'Content-Type: application/json' -d '{\"cab_ids\":[1,3]}')",
+      "Bash(curl -s -X POST http://localhost:3001/api/auth/login -H 'Content-Type: application/json' -d '{\"login\":\"1234\",\"password\":\"1234\"}')",
+      "Bash(curl -s -X PUT http://localhost:3001/api/user-cabs/2 -H 'Content-Type: application/json' -d '{\"cab_ids\":[]}')",
+      "Bash(node -e ' *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001/api/rate)"
+    ]
+  }
+}
