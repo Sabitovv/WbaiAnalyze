@@ -2363,42 +2363,45 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     setLoading(true);
+    const safe = (p, fallback) => p.catch(e => { console.warn('API error:', e.message); return fallback; });
     const curMonth = new Date().toISOString().slice(0, 7);
-    Promise.all([api.getCatalog(), api.getCabs(), api.getHistory(), api.getUsers(), api.getTeams(), api.getUserGoals(curMonth)])
-      .then(([cat, cabList, hist, userList, teamList, goalList]) => {
-        setCatalog(cat);
-        setAllCabs(cabList);
-        setHist(hist);
-        setUsers(userList);
-        setTeams(teamList);
-        setUserGoals(goalList);
-        // Сотрудник видит только назначенные ему кабинеты
-        const visibleCabs = user?.role === 'admin' ? cabList
-          : cabList.filter(c => (user?.cab_ids || []).includes(c.id));
-        setCabs(visibleCabs);
-        const firstCab = visibleCabs[0] || (user?.role === 'admin' ? cabList[0] : null);
-        if (firstCab) {
-          setCab(firstCab.name);
-          if (firstCab.buyout) setRet(+firstCab.buyout);
-        }
-        // Восстановить черновик
-        const draft = (() => { try { return JSON.parse(localStorage.getItem('wb_draft') || 'null'); } catch { return null; } })();
-        if (draft) {
-          if (draft.date)    setDate(draft.date);
-          if (draft.revenue) setRev(draft.revenue);
-          if (draft.adsRub)  setAdsRub(draft.adsRub);
-          if (draft.rows?.length) setRows(draft.rows);
-          else if (cat.length) setRows([mkRow(cat[0])]);
-        } else if (cat.length) setRows([mkRow(cat[0])]);
+    Promise.all([
+      safe(api.getCatalog(), []),
+      safe(api.getCabs(), []),
+      safe(api.getHistory(), []),
+      safe(api.getUsers(), []),
+      safe(api.getTeams(), []),
+      safe(api.getUserGoals(curMonth), []),
+    ]).then(([cat, cabList, hist, userList, teamList, goalList]) => {
+      setCatalog(cat);
+      setAllCabs(cabList);
+      setHist(hist);
+      setUsers(userList);
+      setTeams(teamList);
+      setUserGoals(goalList);
+      const visibleCabs = user?.role === 'admin' ? cabList
+        : cabList.filter(c => (user?.cab_ids || []).includes(c.id));
+      setCabs(visibleCabs);
+      const firstCab = visibleCabs[0] || (user?.role === 'admin' ? cabList[0] : null);
+      if (firstCab) {
+        setCab(firstCab.name);
+        if (firstCab.buyout) setRet(+firstCab.buyout);
+      }
+      const draft = (() => { try { return JSON.parse(localStorage.getItem('wb_draft') || 'null'); } catch { return null; } })();
+      if (draft) {
+        if (draft.date)    setDate(draft.date);
+        if (draft.revenue) setRev(draft.revenue);
+        if (draft.adsRub)  setAdsRub(draft.adsRub);
+        if (draft.rows?.length) setRows(draft.rows);
+        else if (cat.length) setRows([mkRow(cat[0])]);
+      } else if (cat.length) setRows([mkRow(cat[0])]);
 
-        // Уведомление если сегодня ещё нет записей
-        const today = new Date().toISOString().split('T')[0];
-        const hasToday = hist.some(r => (r.date || '').startsWith(today) && r.user_login === (user?.login));
-        if (!hasToday) setTodayBanner(true);
+      const today = new Date().toISOString().split('T')[0];
+      const hasToday = hist.some(r => (r.date || '').startsWith(today) && r.user_login === (user?.login));
+      if (!hasToday) setTodayBanner(true);
 
-        fetchRate();
-      })
-      .finally(() => setLoading(false));
+      fetchRate();
+    }).finally(() => setLoading(false));
   }, [user]);
 
   const mkRow = prod => ({ id: Date.now() + Math.random(), product: prod.name, qty: '', cost: prod.cost, comm: prod.comm });
