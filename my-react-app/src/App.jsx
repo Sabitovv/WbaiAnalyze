@@ -1841,8 +1841,28 @@ function TeamsPanel({ teams, setTeams, users, history }) {
   const medals = ['🥇', '🥈', '🥉'];
   const employees = users;
 
+  // Уникальные логины из истории за период
+  const historyLogins = [...new Set(filtered.map(r => r.user_login).filter(Boolean))];
+
   return (
     <div className="fade-in">
+      {/* Диагностика — показывает что не совпадает */}
+      {teamStats.every(t => t.rev === 0) && filtered.length > 0 && (
+        <div style={{ marginBottom: 12, padding: '12px 16px', borderRadius: 10,
+          background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', fontSize: 12 }}>
+          <div style={{ color: 'var(--yellow-txt)', fontWeight: 600, marginBottom: 8 }}>
+            ⚠️ В истории есть данные ({filtered.length} записей), но они не привязаны к участникам команд
+          </div>
+          <div style={{ color: 'var(--txt2)', marginBottom: 4 }}>
+            Логины в истории: <b style={{ color: 'var(--txt)' }}>{historyLogins.join(', ') || '—'}</b>
+          </div>
+          <div style={{ color: 'var(--txt2)' }}>
+            Логины участников команд: <b style={{ color: 'var(--txt)' }}>
+              {[...new Set(teamStats.flatMap(t => t.logins))].join(', ') || '—'}
+            </b>
+          </div>
+        </div>
+      )}
       <FilterBar period={period} setPeriod={setPeriod}
         dateFrom={dateFrom} setDateFrom={setDateFrom}
         dateTo={dateTo} setDateTo={setDateTo} />
