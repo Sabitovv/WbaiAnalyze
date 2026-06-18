@@ -31,6 +31,13 @@ pool.query(`CREATE TABLE IF NOT EXISTS team_members (
   PRIMARY KEY (team_id, user_id)
 )`).catch(e => console.error('team_members init error:', e.message));
 
+pool.query(`CREATE TABLE IF NOT EXISTS user_goals (
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  month   TEXT NOT NULL,
+  goal    NUMERIC NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, month)
+)`).catch(e => console.error('user_goals init error:', e.message));
+
 // ── Курс RUB/KZT ─────────────────────────────────────────────────────────────
 app.get('/api/rate', async (_req, res) => {
   try {
@@ -288,6 +295,31 @@ app.put('/api/users/:id/salary', async (req, res) => {
   const { salary_pct } = req.body;
   await pool.query(`UPDATE users SET salary_pct=$1 WHERE id=$2`, [salary_pct, req.params.id]);
   res.json({ ok: true });
+});
+
+// ── User Goals (планы на месяц) ───────────────────────────────────────────────
+// GET /api/user-goals?month=2026-06  — все планы за месяц
+app.get('/api/user-goals', async (req, res) => {
+  try {
+    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const { rows } = await pool.query(
+      `SELECT user_id, month, goal FROM user_goals WHERE month=$1`, [month]
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT /api/user-goals/:userId/:month  — установить план
+app.put('/api/user-goals/:userId/:month', async (req, res) => {
+  try {
+    const { goal } = req.body;
+    await pool.query(
+      `INSERT INTO user_goals (user_id, month, goal) VALUES ($1,$2,$3)
+       ON CONFLICT (user_id, month) DO UPDATE SET goal=$3`,
+      [req.params.userId, req.params.month, goal]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 const PORT = process.env.PORT || 3001;

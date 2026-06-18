@@ -38,6 +38,9 @@ export const api = {
   updateCab:    (id, data)     => req('PUT',    `/cabs/${id}`, data),
   deleteCab:    (id)           => req('DELETE', `/cabs/${id}`),
 
+  getUserGoals:  (month)        => req('GET', `/user-goals?month=${month}`),
+  setUserGoal:   (userId, month, goal) => req('PUT', `/user-goals/${userId}/${month}`, { goal }),
+
   getHistory:    ()        => req('GET',    '/history'),
   addHistory:    (rec)     => req('POST',   '/history', rec),
   updateHistory: (id, rec) => req('PUT',    `/history/${id}`, rec),

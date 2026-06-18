@@ -435,6 +435,41 @@ function TopEmployees({ history, users }) {
 }
 
 // ── Администратор ─────────────────────────────────────────────────────────────
+function GoalInput({ userId, month, current, onSave }) {
+  const [val, setVal] = useState(current ? String(current) : '');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => { setVal(current ? String(current) : ''); }, [current]);
+
+  const save = async () => {
+    const goal = parseFloat(String(val).replace(/\s/g, '')) || 0;
+    if (goal === current) return;
+    setSaving(true);
+    try {
+      await api.setUserGoal(userId, month, goal);
+      onSave(goal);
+      setSaved(true); setTimeout(() => setSaved(false), 1500);
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
+      <input
+        type="number" min="0" step="1000000"
+        value={val} onChange={e => setVal(e.target.value)}
+        onBlur={save} onKeyDown={e => e.key === 'Enter' && save()}
+        className="form-input"
+        style={{ width: 110, textAlign: 'right', fontSize: 12,
+          borderColor: saved ? 'var(--green)' : undefined }}
+        placeholder="0 ₸"
+      />
+      {saving && <span style={{ fontSize: 10, color: 'var(--txt3)' }}>…</span>}
+      {saved  && <span style={{ fontSize: 12, color: 'var(--green-txt)' }}>✓</span>}
+    </div>
+  );
+}
+
 function SalaryInput({ userId, current, setUsers }) {
   const [val, setVal] = useState(current ?? '');
   const [saving, setSaving] = useState(false);
@@ -467,7 +502,7 @@ function SalaryInput({ userId, current, setUsers }) {
   );
 }
 
-function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCabs }) {
+function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCabs, userGoals, setUserGoals, history }) {
   const [tab,        setTab]        = useState('products');
   const [editProd,   setEditProd]   = useState(null);
   const [showNew,    setShowNew]    = useState(false);
@@ -752,6 +787,62 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
             );
           })()}
 
+          {/* Блок трекера планов */}
+          {(() => {
+            const curMonth = new Date().toISOString().slice(0, 7);
+            const usersWithGoals = users.filter(u => {
+              const g = userGoals?.find(x => x.user_id === u.id && x.month === curMonth);
+              return g && +g.goal > 0;
+            });
+            if (!usersWithGoals.length) return null;
+            return (
+              <div className="card" style={{ padding: '16px 20px', marginBottom: 16 }}>
+                <div className="section-title" style={{ marginBottom: 12 }}>
+                  📊 Выполнение планов — {curMonth}
+                </div>
+                {usersWithGoals.map(u => {
+                  const g = userGoals.find(x => x.user_id === u.id && x.month === curMonth);
+                  const status = calcPlanStatus(+g.goal, history, u.login, curMonth);
+                  if (!status) return null;
+                  const { actual, goal: gv, expectedByToday, delta, deltaPct, progressPct, daysPassed, daysLeft, forecast } = status;
+                  const ahead = delta >= 0;
+                  return (
+                    <div key={u.id} style={{ marginBottom: 16, paddingBottom: 16,
+                      borderBottom: '1px solid var(--border)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div className="avatar" style={{ width: 26, height: 26, fontSize: 10 }}>{initials(u.name || u.login)}</div>
+                          <span style={{ fontWeight: 600, fontSize: 13 }}>{u.name || u.login}</span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 16, fontSize: 12, alignItems: 'center' }}>
+                          <span style={{ color: 'var(--txt3)' }}>День {daysPassed} · осталось {daysLeft} дн.</span>
+                          <span style={{ color: 'var(--blue-txt)', fontWeight: 600 }}>{fmt(actual)} ₸</span>
+                          <span style={{ color: ahead ? 'var(--green-txt)' : 'var(--red-txt)', fontWeight: 700 }}>
+                            {ahead ? '▲' : '▼'} {Math.abs(deltaPct).toFixed(1)}%
+                            <span style={{ fontWeight: 400, fontSize: 11, marginLeft: 4 }}>
+                              ({ahead ? '+' : '−'}{fmt(Math.abs(delta))} ₸)
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+                      <div className="progress-bar">
+                        <div className="progress-fill" style={{
+                          width: progressPct + '%',
+                          background: progressPct >= 100 ? 'var(--green-txt)' : ahead ? 'var(--blue)' : 'var(--yellow-txt)',
+                        }} />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--txt3)', marginTop: 4 }}>
+                        <span>Факт: {fmt(actual)} из {fmt(gv)} ₸ ({progressPct.toFixed(1)}%)</span>
+                        <span>Ожидалось к сегодня: {fmt(expectedByToday)} ₸</span>
+                        <span>Прогноз к концу месяца: <b style={{ color: forecast >= gv ? 'var(--green-txt)' : 'var(--yellow-txt)' }}>{fmt(forecast)} ₸</b></span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
           <table>
             <thead><tr>
               <th style={{ textAlign: 'left' }}>Пользователь</th>
@@ -759,13 +850,16 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
               <th>Роль</th>
               <th>Магазины</th>
               <th>% ЗП</th>
+              <th style={{ textAlign: 'center' }}>🎯 План/мес ₸</th>
               <th></th>
             </tr></thead>
             <tbody>
               {users.map(u => {
+                const curMonth = new Date().toISOString().slice(0, 7);
                 const userCabNames = (u.cab_ids || [])
                   .map(id => allCabs.find(c => c.id === id)?.name)
                   .filter(Boolean);
+                const existingGoal = userGoals?.find(x => x.user_id === u.id && x.month === curMonth);
                 return (
                   <tr key={u.id}>
                     <td>
@@ -797,6 +891,19 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
                     <td style={{ textAlign: 'center' }}>
                       <SalaryInput userId={u.id} current={u.salary_pct} setUsers={setUsers} />
                     </td>
+                    <td style={{ textAlign: 'center', minWidth: 140 }}>
+                      <GoalInput
+                        userId={u.id}
+                        month={curMonth}
+                        current={existingGoal ? +existingGoal.goal : 0}
+                        onSave={(goal) => {
+                          setUserGoals(gs => {
+                            const without = (gs || []).filter(x => !(x.user_id === u.id && x.month === curMonth));
+                            return [...without, { user_id: u.id, month: curMonth, goal }];
+                          });
+                        }}
+                      />
+                    </td>
                     <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                         {u.role !== 'admin' && (
@@ -819,7 +926,7 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
 }
 
 // ── Дашборд компании ──────────────────────────────────────────────────────────
-function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal }) {
+function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal, userGoals }) {
   const [period,     setPeriod]     = useState('month');
   const [dateFrom,   setDateFrom]   = useState('');
   const [dateTo,     setDateTo]     = useState('');
@@ -910,6 +1017,65 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal })
 
   return (
     <div className="fade-in">
+      {/* Трекер планов сотрудников */}
+      {(() => {
+        const curMonth = new Date().toISOString().slice(0, 7);
+        const withGoals = (userGoals || []).filter(g => g.month === curMonth && +g.goal > 0);
+        if (!withGoals.length) return null;
+        return (
+          <div className="card" style={{ padding: '16px 20px', marginBottom: 16 }}>
+            <div className="section-title" style={{ marginBottom: 14 }}>🎯 Планы на {curMonth}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {withGoals.map(g => {
+                const u = users.find(x => x.id === g.user_id);
+                if (!u) return null;
+                const status = calcPlanStatus(+g.goal, history, u.login, curMonth);
+                if (!status) return null;
+                const { actual, goal: gv, expectedByToday, delta, deltaPct, progressPct, daysPassed, daysLeft, forecast } = status;
+                const ahead = delta >= 0;
+                return (
+                  <div key={g.user_id}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div className="avatar" style={{ width: 28, height: 28, fontSize: 10 }}>{initials(u.name || u.login)}</div>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>{u.name || u.login}</div>
+                          <div style={{ fontSize: 10, color: 'var(--txt3)' }}>
+                            День {daysPassed} · осталось {daysLeft} дн. · план {fmt(gv)} ₸
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: ahead ? 'var(--green-txt)' : 'var(--red-txt)' }}>
+                          {ahead ? '▲ Опережает' : '▼ Отстаёт'} {Math.abs(deltaPct).toFixed(1)}%
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--txt3)' }}>
+                          {ahead ? '+' : '−'}{fmt(Math.abs(delta))} ₸ от темпа
+                        </div>
+                      </div>
+                    </div>
+                    <div className="progress-bar">
+                      <div className="progress-fill" style={{
+                        width: progressPct + '%',
+                        background: progressPct >= 100 ? 'var(--green-txt)' : ahead ? 'var(--blue)' : 'var(--yellow-txt)',
+                        transition: 'width 0.6s ease',
+                      }} />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--txt3)', marginTop: 4 }}>
+                      <span>{fmt(actual)} ₸ ({progressPct.toFixed(1)}%)</span>
+                      <span>Нужно было: {fmt(expectedByToday)} ₸</span>
+                      <span style={{ color: forecast >= gv ? 'var(--green-txt)' : 'var(--yellow-txt)', fontWeight: 600 }}>
+                        Прогноз: {fmt(forecast)} ₸
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Лучшие сотрудники */}
       <TopEmployees history={history} users={users} />
 
@@ -1845,6 +2011,98 @@ function TeamsPanel({ teams, setTeams, users, history }) {
   );
 }
 
+// ── Трекер плана ─────────────────────────────────────────────────────────────
+// Считает план по календарным дням: ожидается goal / daysInMonth * daysPassed
+function calcPlanStatus(goal, history, userLogin, month) {
+  if (!goal || goal <= 0) return null;
+
+  const [y, m] = month.split('-').map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+
+  // сколько дней прошло (включая сегодня)
+  const daysPassed = Math.min(today.getDate(), daysInMonth);
+
+  // фактическая выручка за этот месяц у пользователя
+  const actual = history
+    .filter(r => r.user_login === userLogin && (r.date || '').startsWith(month))
+    .reduce((s, r) => s + (parseFloat(r.rev) || 0), 0);
+
+  const expectedByToday = (goal / daysInMonth) * daysPassed;
+  const dailyPace       = goal / daysInMonth;
+  const delta           = actual - expectedByToday;
+  const deltaPct        = expectedByToday > 0 ? (delta / expectedByToday) * 100 : 0;
+  const progressPct     = Math.min(actual / goal * 100, 100);
+
+  // прогноз: если темп сохранится
+  const avgPerDay = daysPassed > 0 ? actual / daysPassed : 0;
+  const forecast  = avgPerDay * daysInMonth;
+
+  return {
+    goal, actual, expectedByToday, dailyPace, delta, deltaPct,
+    progressPct, daysInMonth, daysPassed, daysLeft: daysInMonth - daysPassed,
+    forecast, month,
+  };
+}
+
+function PlanTracker({ status, compact = false }) {
+  if (!status) return null;
+  const { goal, actual, expectedByToday, delta, deltaPct, progressPct,
+          daysPassed, daysLeft, forecast } = status;
+  const ahead = delta >= 0;
+  const statusColor = ahead ? 'var(--green-txt)' : 'var(--red-txt)';
+
+  if (compact) {
+    return (
+      <div style={{ background: ahead ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+        border: `1px solid ${ahead ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+        borderRadius: 10, padding: '10px 14px', marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--txt2)' }}>
+            🎯 План на месяц: {fmt(goal)} ₸
+          </span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: statusColor }}>
+            {ahead ? '▲ Опережает' : '▼ Отстаёт'} {Math.abs(deltaPct).toFixed(1)}%
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--txt2)', marginBottom: 8 }}>
+          <span>Факт: <b style={{ color: 'var(--blue-txt)' }}>{fmt(actual)} ₸</b></span>
+          <span>Ожидалось: <b style={{ color: 'var(--txt)' }}>{fmt(expectedByToday)} ₸</b></span>
+          <span>{ahead ? '+' : '−'}<b style={{ color: statusColor }}>{fmt(Math.abs(delta))} ₸</b></span>
+        </div>
+        <div className="progress-bar">
+          <div className="progress-fill" style={{
+            width: progressPct + '%',
+            background: progressPct >= 100 ? 'var(--green-txt)' : ahead ? 'var(--blue)' : 'var(--yellow-txt)',
+          }} />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--txt3)', marginTop: 4 }}>
+          <span>День {daysPassed} из {status.daysInMonth}</span>
+          <span>{progressPct.toFixed(1)}% плана выполнено</span>
+          <span>Прогноз: {fmt(forecast)} ₸</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Полный вид для таблицы в AdminPanel
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: statusColor }}>
+        {ahead ? '▲' : '▼'} {Math.abs(deltaPct).toFixed(1)}%
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--txt3)' }}>
+        {fmt(actual)} / {fmt(goal)} ₸
+      </div>
+      <div style={{ width: 80, height: 4, background: 'var(--border)', borderRadius: 2 }}>
+        <div style={{ width: Math.min(progressPct, 100) + '%', height: '100%',
+          background: ahead ? 'var(--green-txt)' : 'var(--yellow-txt)', borderRadius: 2 }} />
+      </div>
+    </div>
+  );
+}
+
 // ── Пустые состояния ─────────────────────────────────────────────────────────
 const EMPTY_STATES = {
   chart: {
@@ -2066,6 +2324,7 @@ export default function App() {
   const [allCabs, setAllCabs] = useState([]);   // все кабинеты (для админа)
   const [history, setHist]    = useState([]);
   const [teams,   setTeams]   = useState([]);
+  const [userGoals, setUserGoals] = useState([]); // [{user_id, month, goal}]
   const [loading, setLoading] = useState(true);
   const [appTab,  setAppTab]  = useState('calc');
 
@@ -2104,13 +2363,15 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     setLoading(true);
-    Promise.all([api.getCatalog(), api.getCabs(), api.getHistory(), api.getUsers(), api.getTeams()])
-      .then(([cat, cabList, hist, userList, teamList]) => {
+    const curMonth = new Date().toISOString().slice(0, 7);
+    Promise.all([api.getCatalog(), api.getCabs(), api.getHistory(), api.getUsers(), api.getTeams(), api.getUserGoals(curMonth)])
+      .then(([cat, cabList, hist, userList, teamList, goalList]) => {
         setCatalog(cat);
         setAllCabs(cabList);
         setHist(hist);
         setUsers(userList);
         setTeams(teamList);
+        setUserGoals(goalList);
         // Сотрудник видит только назначенные ему кабинеты
         const visibleCabs = user?.role === 'admin' ? cabList
           : cabList.filter(c => (user?.cab_ids || []).includes(c.id));
@@ -2490,6 +2751,13 @@ export default function App() {
 
               {/* Результат */}
               <div>
+                {/* Трекер плана */}
+                {(() => {
+                  const curMonth = new Date().toISOString().slice(0, 7);
+                  const g = userGoals.find(x => x.user_id === user.id && x.month === curMonth);
+                  const status = g ? calcPlanStatus(+g.goal, history, user.login, curMonth) : null;
+                  return status ? <PlanTracker status={status} compact /> : null;
+                })()}
                 <ResultPanel c={calc} />
                 <div style={{ marginTop: 10, marginBottom: 8 }}>
                   <input className="form-input" value={comment} onChange={e => setComment(e.target.value)}
@@ -2529,7 +2797,8 @@ export default function App() {
         )}
 
         {appTab === 'company' && <CompanyDashboard history={history} users={users} cabs={cabs}
-          revenueGoal={revenueGoal} setRevenueGoal={g => { setRevenueGoal(g); localStorage.setItem('wb_rev_goal', g); }} />}
+          revenueGoal={revenueGoal} setRevenueGoal={g => { setRevenueGoal(g); localStorage.setItem('wb_rev_goal', g); }}
+          userGoals={userGoals} />}
 
         {appTab === 'report' && (
           <ReportPanel history={history} users={users} allCabs={allCabs}
@@ -2543,7 +2812,8 @@ export default function App() {
         {appTab === 'admin' && isAdmin && (
           <AdminPanel catalog={catalog} setCatalog={setCatalog}
             cabs={allCabs} setCabs={cab => { setAllCabs(cab); setCabs(cab); }}
-            users={users} setUsers={setUsers} allCabs={allCabs} />
+            users={users} setUsers={setUsers} allCabs={allCabs}
+            userGoals={userGoals} setUserGoals={setUserGoals} history={history} />
         )}
       </div>
     </div>
