@@ -27,7 +27,28 @@
       "Bash(curl -s -X PUT http://localhost:3001/api/user-cabs/2 -H 'Content-Type: application/json' -d '{\"cab_ids\":[]}')",
       "Bash(node -e ' *)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001/api/rate)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001/api/rate)",
+      "Bash(curl -s -X PUT http://localhost:3001/api/cabs/1 -H 'Content-Type: application/json' -d '{\"buyout\": 75}')",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(d['name'], d['buyout']\\)\")",
+      "Bash(npx tsc *)",
+      "Bash(npx vite *)",
+      "Bash(curl -s http://localhost:50349)",
+      "Bash(curl -s http://localhost:5173)",
+      "Bash(curl -s http://localhost:3001/api/teams)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git remote *)",
+      "Bash(git push *)",
+      "Bash(git ls-remote *)",
+      "Bash(git fetch *)",
+      "Bash(curl -s http://localhost:5174)",
+      "Bash(find /tmp/wbai_repo -type f | head -60 && echo \"---\" && ls /tmp/wbai_repo)",
+      "Read(//private/tmp/**)",
+      "Bash(unzip -o /Users/bainazarnurbek/Downloads/wbai_extension_FINAL.zip -d wbai_ext)",
+      "Bash(zip -r /Users/bainazarnurbek/Downloads/wbai_extension_UPDATED.zip . --exclude \"*.git*\")",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(zip -r /Users/bainazarnurbek/Downloads/wbai_extension_UPDATED.zip . --exclude \"*.DS_Store\")"
     ]
   }
 }

@@ -206,20 +206,20 @@ app.get('/api/history', async (_req, res) => {
 });
 
 app.post('/api/history', async (req, res) => {
-  const { date, cabinet, user_login, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr } = req.body;
+  const { date, cabinet, user_login, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment } = req.body;
   const { rows } = await pool.query(
-    `INSERT INTO history (date,cabinet,user_login,rev,ads,cost,comm,log_f,log_r,ret,profit,margin,drr)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
-    [date, cabinet, user_login, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr]
+    `INSERT INTO history (date,cabinet,user_login,rev,ads,cost,comm,log_f,log_r,ret,profit,margin,drr,comment)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+    [date, cabinet, user_login, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment||'']
   );
   res.json(rows[0]);
 });
 
 app.put('/api/history/:id', async (req, res) => {
-  const { date, cabinet, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr } = req.body;
+  const { date, cabinet, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment } = req.body;
   const { rows } = await pool.query(
-    `UPDATE history SET date=$1,cabinet=$2,rev=$3,ads=$4,cost=$5,comm=$6,log_f=$7,log_r=$8,ret=$9,profit=$10,margin=$11,drr=$12 WHERE id=$13 RETURNING *`,
-    [date, cabinet, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, req.params.id]
+    `UPDATE history SET date=$1,cabinet=$2,rev=$3,ads=$4,cost=$5,comm=$6,log_f=$7,log_r=$8,ret=$9,profit=$10,margin=$11,drr=$12,comment=$13 WHERE id=$14 RETURNING *`,
+    [date, cabinet, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment||'', req.params.id]
   );
   res.json(rows[0]);
 });
@@ -267,6 +267,20 @@ app.put('/api/teams/:id/members', async (req, res) => {
     res.json({ ok: true, user_ids });
   } catch (e) { await client.query('ROLLBACK'); res.status(500).json({ error: e.message }); }
   finally { client.release(); }
+});
+
+// ── Change password ───────────────────────────────────────────────────────────
+app.put('/api/users/:id/password', async (req, res) => {
+  const { old_password, new_password } = req.body;
+  try {
+    const { rows } = await pool.query(`SELECT * FROM users WHERE id=$1`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Пользователь не найден' });
+    const ok = await bcrypt.compare(old_password, rows[0].password);
+    if (!ok) return res.status(400).json({ error: 'Неверный текущий пароль' });
+    const hash = await bcrypt.hash(new_password, 10);
+    await pool.query(`UPDATE users SET password=$1 WHERE id=$2`, [hash, req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Salary rate ───────────────────────────────────────────────────────────────

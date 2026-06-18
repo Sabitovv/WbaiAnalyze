@@ -16,7 +16,8 @@ export const api = {
   register:     (login, password, name) => req('POST', '/auth/register', { login, password, name }),
 
   getUsers:     ()       => req('GET',    '/users'),
-  deleteUser:   (id)     => req('DELETE', `/users/${id}`),
+  deleteUser:      (id)              => req('DELETE', `/users/${id}`),
+  changePassword:  (id, old_password, new_password) => req('PUT', `/users/${id}/password`, { old_password, new_password }),
 
   getCatalog:   ()       => req('GET',    '/catalog'),
   addProduct:   (p)      => req('POST',   '/catalog', p),
