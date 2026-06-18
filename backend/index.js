@@ -68,7 +68,6 @@ app.post('/api/auth/login', async (req, res) => {
     const ok = await bcrypt.compare(password, rows[0].password);
     if (!ok)  return res.status(401).json({ error: 'Неверный логин или пароль' });
     const { password: _, ...user } = rows[0];
-    // Получаем список разрешённых кабинетов
     const { rows: cabRows } = await pool.query(
       `SELECT cab_id FROM user_cabs WHERE user_id=$1`, [user.id]
     );
@@ -94,7 +93,7 @@ app.post('/api/auth/register', async (req, res) => {
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 app.get('/api/users', async (_req, res) => {
-  const { rows } = await pool.query(`SELECT id,login,name,role,salary_pct,created_at FROM users ORDER BY id`);
+  const { rows } = await pool.query(`SELECT id,login,name,role,created_at,salary_pct FROM users ORDER BY id`);
   const { rows: cabRows } = await pool.query(`SELECT user_id, cab_id FROM user_cabs`);
   const cabMap = {};
   cabRows.forEach(r => {
@@ -125,7 +124,7 @@ app.get('/api/user-cabs/:userId', async (req, res) => {
 
 app.put('/api/user-cabs/:userId', async (req, res) => {
   const userId = req.params.userId;
-  const cabIds = req.body.cab_ids || []; // массив id кабинетов
+  const cabIds = req.body.cab_ids || [];
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -298,7 +297,6 @@ app.put('/api/users/:id/salary', async (req, res) => {
 });
 
 // ── User Goals (планы на месяц) ───────────────────────────────────────────────
-// GET /api/user-goals?month=2026-06  — все планы за месяц
 app.get('/api/user-goals', async (req, res) => {
   try {
     const month = req.query.month || new Date().toISOString().slice(0, 7);
@@ -309,7 +307,6 @@ app.get('/api/user-goals', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// PUT /api/user-goals/:userId/:month  — установить план
 app.put('/api/user-goals/:userId/:month', async (req, res) => {
   try {
     const { goal } = req.body;

@@ -43,6 +43,13 @@ async function migrate() {
         PRIMARY KEY (team_id, user_id)
       );
 
+      CREATE TABLE IF NOT EXISTS user_goals (
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        month   TEXT NOT NULL,
+        goal    NUMERIC NOT NULL DEFAULT 0,
+        PRIMARY KEY (user_id, month)
+      );
+
       CREATE TABLE IF NOT EXISTS history (
         id SERIAL PRIMARY KEY,
         date DATE NOT NULL,
@@ -58,6 +65,7 @@ async function migrate() {
         profit NUMERIC DEFAULT 0,
         margin NUMERIC DEFAULT 0,
         drr NUMERIC DEFAULT 0,
+        comment TEXT DEFAULT '',
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
