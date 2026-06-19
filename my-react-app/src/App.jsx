@@ -1818,14 +1818,22 @@ function TeamsPanel({ teams, setTeams, users, history }) {
   const teamStats = useMemo(() => {
     return teams.map(team => {
       const memberUsers = (team.member_ids || []).map(id => users.find(u => u.id === id)).filter(Boolean);
-      const logins = memberUsers.map(u => u.login);
-      const recs = filtered.filter(r => logins.includes(r.user_login));
+      const memberIds = new Set(memberUsers.map(u => u.id));
+      const logins = memberUsers.map(u => u.login?.toLowerCase().trim());
+      const matchRec = r => {
+        if (r.user_id && memberIds.has(+r.user_id)) return true;
+        return logins.includes(r.user_login?.toLowerCase().trim());
+      };
+      const recs = filtered.filter(matchRec);
       const rev    = recs.reduce((s, r) => s + (parseFloat(r.rev)    || 0), 0);
       const profit = recs.reduce((s, r) => s + (parseFloat(r.profit) || 0), 0);
       const ads    = recs.reduce((s, r) => s + (parseFloat(r.ads)    || 0), 0);
       // Рейтинг участников
       const memberStats = memberUsers.map(u => {
-        const ur = recs.filter(r => r.user_login === u.login);
+        const ur = recs.filter(r =>
+          (r.user_id && +r.user_id === u.id) ||
+          r.user_login?.toLowerCase().trim() === u.login?.toLowerCase().trim()
+        );
         const uRev = ur.reduce((s, r) => s + (parseFloat(r.rev) || 0), 0);
         const uProfit = ur.reduce((s, r) => s + (parseFloat(r.profit) || 0), 0);
         return { ...u, rev: uRev, profit: uProfit };
@@ -1840,25 +1848,43 @@ function TeamsPanel({ teams, setTeams, users, history }) {
   const medals = ['🥇', '🥈', '🥉'];
   const employees = users;
 
-  // Уникальные логины из истории за период
-  const historyLogins = [...new Set(filtered.map(r => r.user_login).filter(Boolean))];
+  // Сотрудники с данными в истории, но не в любой команде
+  const allTeamUserIds = new Set(teams.flatMap(t => t.member_ids || []));
+  const usersWithData = useMemo(() => {
+    const loginsInPeriod = new Set(filtered.map(r => r.user_login).filter(Boolean));
+    return users.filter(u => loginsInPeriod.has(u.login) && !allTeamUserIds.has(u.id));
+  }, [filtered, users, allTeamUserIds]);
 
   return (
     <div className="fade-in">
-      {/* Диагностика — показывает что не совпадает */}
-      {teamStats.every(t => t.rev === 0) && filtered.length > 0 && (
+      {/* Сотрудники с данными, но без команды */}
+      {usersWithData.length > 0 && (
         <div style={{ marginBottom: 12, padding: '12px 16px', borderRadius: 10,
-          background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', fontSize: 12 }}>
-          <div style={{ color: 'var(--yellow-txt)', fontWeight: 600, marginBottom: 8 }}>
-            ⚠️ В истории есть данные ({filtered.length} записей), но они не привязаны к участникам команд
+          background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', fontSize: 13 }}>
+          <div style={{ color: 'var(--yellow-txt)', fontWeight: 600, marginBottom: 10 }}>
+            Не привязаны к командам ({usersWithData.length} чел.)
           </div>
-          <div style={{ color: 'var(--txt2)', marginBottom: 4 }}>
-            Логины в истории: <b style={{ color: 'var(--txt)' }}>{historyLogins.join(', ') || '—'}</b>
-          </div>
-          <div style={{ color: 'var(--txt2)' }}>
-            Логины участников команд: <b style={{ color: 'var(--txt)' }}>
-              {[...new Set(teamStats.flatMap(t => t.logins))].join(', ') || '—'}
-            </b>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {usersWithData.map(u => (
+              <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 6,
+                padding: '4px 10px', borderRadius: 20,
+                background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.25)' }}>
+                <span style={{ color: 'var(--txt)' }}>{u.name || u.login}</span>
+                {teams.length > 0 && (
+                  <select style={{ fontSize: 11, background: 'transparent', border: 'none',
+                    color: 'var(--txt2)', cursor: 'pointer' }}
+                    defaultValue=""
+                    onChange={async e => {
+                      const teamId = +e.target.value;
+                      if (!teamId) return;
+                      await toggleMember(teamId, u.id);
+                    }}>
+                    <option value="">+ в команду</option>
+                    {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -2488,7 +2514,7 @@ export default function App() {
     if (!calc.rev) { alert('Введи выручку'); return; }
     try {
       const rec = await api.addHistory({
-        date, cabinet, user_login: user.login,
+        date, cabinet, user_login: user.login, user_id: user.id,
         rev: calc.rev, ads: calc.ads, cost: calc.cost, comm: calc.comm,
         log_f: calc.logF, log_r: calc.logR, ret: calc.ret,
         profit: calc.profit, margin: calc.margin, drr: calc.drr, comment,
