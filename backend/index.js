@@ -31,6 +31,16 @@ pool.query(`CREATE TABLE IF NOT EXISTS team_members (
   PRIMARY KEY (team_id, user_id)
 )`).catch(e => console.error('team_members init error:', e.message));
 
+pool.query(`ALTER TABLE history ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL`)
+  .catch(e => console.error('history user_id init error:', e.message));
+
+// Backfill user_id for existing records where it's null
+pool.query(`
+  UPDATE history h SET user_id = u.id
+  FROM users u
+  WHERE h.user_id IS NULL AND LOWER(h.user_login) = LOWER(u.login)
+`).catch(e => console.error('history backfill error:', e.message));
+
 pool.query(`CREATE TABLE IF NOT EXISTS user_goals (
   user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
   month   TEXT NOT NULL,
@@ -207,16 +217,21 @@ app.delete('/api/cabs/:id', async (req, res) => {
 
 // ── History ───────────────────────────────────────────────────────────────────
 app.get('/api/history', async (_req, res) => {
-  const { rows } = await pool.query(`SELECT * FROM history ORDER BY created_at DESC`);
+  const { rows } = await pool.query(`
+    SELECT h.*, COALESCE(h.user_id, u.id) AS user_id
+    FROM history h
+    LEFT JOIN users u ON LOWER(u.login) = LOWER(h.user_login)
+    ORDER BY h.created_at DESC
+  `);
   res.json(rows);
 });
 
 app.post('/api/history', async (req, res) => {
-  const { date, cabinet, user_login, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment } = req.body;
+  const { date, cabinet, user_login, user_id, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment } = req.body;
   const { rows } = await pool.query(
-    `INSERT INTO history (date,cabinet,user_login,rev,ads,cost,comm,log_f,log_r,ret,profit,margin,drr,comment)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
-    [date, cabinet, user_login, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment||'']
+    `INSERT INTO history (date,cabinet,user_login,user_id,rev,ads,cost,comm,log_f,log_r,ret,profit,margin,drr,comment)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+    [date, cabinet, user_login, user_id || null, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment||'']
   );
   res.json(rows[0]);
 });
