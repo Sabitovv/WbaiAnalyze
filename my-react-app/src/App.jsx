@@ -2392,15 +2392,18 @@ export default function App() {
       safe(api.getUsers(), []),
       safe(api.getTeams(), []),
       safe(api.getUserGoals(curMonth), []),
-    ]).then(([cat, cabList, hist, userList, teamList, goalList]) => {
+      safe(api.getUserCabs(user.id), []),   // всегда грузим свежие кабинеты текущего пользователя
+    ]).then(([cat, cabList, hist, userList, teamList, goalList, freshCabIds]) => {
       setCatalog(cat);
       setAllCabs(cabList);
       setHist(hist);
       setUsers(userList);
       setTeams(teamList);
       setUserGoals(goalList);
+      // freshCabIds — актуальные ID кабинетов, даже если назначили после логина
+      const myCabIds = user?.role === 'admin' ? cabList.map(c => c.id) : freshCabIds.map(id => +id);
       const visibleCabs = user?.role === 'admin' ? cabList
-        : cabList.filter(c => (user?.cab_ids || []).includes(c.id));
+        : cabList.filter(c => myCabIds.includes(+c.id));
       setCabs(visibleCabs);
       const firstCab = visibleCabs[0] || (user?.role === 'admin' ? cabList[0] : null);
       if (firstCab) {
