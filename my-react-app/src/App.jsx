@@ -787,62 +787,6 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
             );
           })()}
 
-          {/* Блок трекера планов */}
-          {(() => {
-            const curMonth = new Date().toISOString().slice(0, 7);
-            const usersWithGoals = users.filter(u => {
-              const g = userGoals?.find(x => x.user_id === u.id && x.month === curMonth);
-              return g && +g.goal > 0;
-            });
-            if (!usersWithGoals.length) return null;
-            return (
-              <div className="card" style={{ padding: '16px 20px', marginBottom: 16 }}>
-                <div className="section-title" style={{ marginBottom: 12 }}>
-                  📊 Выполнение планов — {curMonth}
-                </div>
-                {usersWithGoals.map(u => {
-                  const g = userGoals.find(x => x.user_id === u.id && x.month === curMonth);
-                  const status = calcPlanStatus(+g.goal, history, u.login, curMonth);
-                  if (!status) return null;
-                  const { actual, goal: gv, expectedByToday, delta, deltaPct, progressPct, daysPassed, daysLeft, forecast } = status;
-                  const ahead = delta >= 0;
-                  return (
-                    <div key={u.id} style={{ marginBottom: 16, paddingBottom: 16,
-                      borderBottom: '1px solid var(--border)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <div className="avatar" style={{ width: 26, height: 26, fontSize: 10 }}>{initials(u.name || u.login)}</div>
-                          <span style={{ fontWeight: 600, fontSize: 13 }}>{u.name || u.login}</span>
-                        </div>
-                        <div style={{ display: 'flex', gap: 16, fontSize: 12, alignItems: 'center' }}>
-                          <span style={{ color: 'var(--txt3)' }}>День {daysPassed} · осталось {daysLeft} дн.</span>
-                          <span style={{ color: 'var(--blue-txt)', fontWeight: 600 }}>{fmt(actual)} ₸</span>
-                          <span style={{ color: ahead ? 'var(--green-txt)' : 'var(--red-txt)', fontWeight: 700 }}>
-                            {ahead ? '▲' : '▼'} {Math.abs(deltaPct).toFixed(1)}%
-                            <span style={{ fontWeight: 400, fontSize: 11, marginLeft: 4 }}>
-                              ({ahead ? '+' : '−'}{fmt(Math.abs(delta))} ₸)
-                            </span>
-                          </span>
-                        </div>
-                      </div>
-                      <div className="progress-bar">
-                        <div className="progress-fill" style={{
-                          width: progressPct + '%',
-                          background: progressPct >= 100 ? 'var(--green-txt)' : ahead ? 'var(--blue)' : 'var(--yellow-txt)',
-                        }} />
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--txt3)', marginTop: 4 }}>
-                        <span>Факт: {fmt(actual)} из {fmt(gv)} ₸ ({progressPct.toFixed(1)}%)</span>
-                        <span>Ожидалось к сегодня: {fmt(expectedByToday)} ₸</span>
-                        <span>Прогноз к концу месяца: <b style={{ color: forecast >= gv ? 'var(--green-txt)' : 'var(--yellow-txt)' }}>{fmt(forecast)} ₸</b></span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })()}
-
           <table>
             <thead><tr>
               <th style={{ textAlign: 'left' }}>Пользователь</th>
@@ -919,6 +863,61 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
               })}
             </tbody>
           </table>
+
+          {/* Блок трекера планов — под таблицей */}
+          {(() => {
+            const curMonth = new Date().toISOString().slice(0, 7);
+            const usersWithGoals = users.filter(u => {
+              const g = userGoals?.find(x => x.user_id === u.id && x.month === curMonth);
+              return g && +g.goal > 0;
+            });
+            if (!usersWithGoals.length) return null;
+            return (
+              <div className="card" style={{ padding: '16px 20px', marginTop: 16 }}>
+                <div className="section-title" style={{ marginBottom: 12 }}>
+                  📊 Выполнение планов — {curMonth}
+                </div>
+                {usersWithGoals.map(u => {
+                  const g = userGoals.find(x => x.user_id === u.id && x.month === curMonth);
+                  const status = calcPlanStatus(+g.goal, history, u.login, curMonth);
+                  if (!status) return null;
+                  const { actual, goal: gv, expectedByToday, delta, deltaPct, progressPct, daysPassed, daysLeft, forecast } = status;
+                  const ahead = delta >= 0;
+                  return (
+                    <div key={u.id} style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid var(--border)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div className="avatar" style={{ width: 26, height: 26, fontSize: 10 }}>{initials(u.name || u.login)}</div>
+                          <span style={{ fontWeight: 600, fontSize: 13 }}>{u.name || u.login}</span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 16, fontSize: 12, alignItems: 'center' }}>
+                          <span style={{ color: 'var(--txt3)' }}>День {daysPassed} · осталось {daysLeft} дн.</span>
+                          <span style={{ color: 'var(--blue-txt)', fontWeight: 600 }}>{fmt(actual)} ₸</span>
+                          <span style={{ color: ahead ? 'var(--green-txt)' : 'var(--red-txt)', fontWeight: 700 }}>
+                            {ahead ? '▲' : '▼'} {Math.abs(deltaPct).toFixed(1)}%
+                            <span style={{ fontWeight: 400, fontSize: 11, marginLeft: 4 }}>
+                              ({ahead ? '+' : '−'}{fmt(Math.abs(delta))} ₸)
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+                      <div className="progress-bar">
+                        <div className="progress-fill" style={{
+                          width: progressPct + '%',
+                          background: progressPct >= 100 ? 'var(--green-txt)' : ahead ? 'var(--blue)' : 'var(--yellow-txt)',
+                        }} />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--txt3)', marginTop: 4 }}>
+                        <span>Факт: {fmt(actual)} из {fmt(gv)} ₸ ({progressPct.toFixed(1)}%)</span>
+                        <span>Ожидалось к сегодня: {fmt(expectedByToday)} ₸</span>
+                        <span>Прогноз: <b style={{ color: forecast >= gv ? 'var(--green-txt)' : 'var(--yellow-txt)' }}>{fmt(forecast)} ₸</b></span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
