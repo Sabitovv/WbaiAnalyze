@@ -31,6 +31,15 @@ pool.query(`CREATE TABLE IF NOT EXISTS team_members (
   PRIMARY KEY (team_id, user_id)
 )`).catch(e => console.error('team_members init error:', e.message));
 
+pool.query(`CREATE TABLE IF NOT EXISTS history_items (
+  id         SERIAL PRIMARY KEY,
+  history_id INTEGER REFERENCES history(id) ON DELETE CASCADE,
+  product    TEXT,
+  qty        NUMERIC DEFAULT 0,
+  cost       NUMERIC DEFAULT 0,
+  comm       NUMERIC DEFAULT 0
+)`).catch(e => console.error('history_items init error:', e.message));
+
 pool.query(`ALTER TABLE history ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL`)
   .catch(e => console.error('history user_id init error:', e.message));
 
@@ -227,13 +236,43 @@ app.get('/api/history', async (_req, res) => {
 });
 
 app.post('/api/history', async (req, res) => {
-  const { date, cabinet, user_login, user_id, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment } = req.body;
-  const { rows } = await pool.query(
-    `INSERT INTO history (date,cabinet,user_login,user_id,rev,ads,cost,comm,log_f,log_r,ret,profit,margin,drr,comment)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-    [date, cabinet, user_login, user_id || null, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment||'']
-  );
-  res.json(rows[0]);
+  const { date, cabinet, user_login, user_id, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment, items } = req.body;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO history (date,cabinet,user_login,user_id,rev,ads,cost,comm,log_f,log_r,ret,profit,margin,drr,comment)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+      [date, cabinet, user_login, user_id || null, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment||'']
+    );
+    const histId = rows[0].id;
+    if (Array.isArray(items)) {
+      for (const it of items) {
+        if (!it.product || !it.qty) continue;
+        await client.query(
+          `INSERT INTO history_items (history_id, product, qty, cost, comm) VALUES ($1,$2,$3,$4,$5)`,
+          [histId, it.product, it.qty || 0, it.cost || 0, it.comm || 0]
+        );
+      }
+    }
+    await client.query('COMMIT');
+    res.json(rows[0]);
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/history-items', async (_req, res) => {
+  const { rows } = await pool.query(`
+    SELECT hi.*, h.date, h.cabinet, h.user_login, h.user_id
+    FROM history_items hi
+    JOIN history h ON h.id = hi.history_id
+    ORDER BY h.date DESC
+  `);
+  res.json(rows);
 });
 
 app.put('/api/history/:id', async (req, res) => {
