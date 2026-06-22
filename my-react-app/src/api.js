@@ -41,8 +41,9 @@ export const api = {
   getUserGoals:  (month)        => req('GET', `/user-goals?month=${month}`),
   setUserGoal:   (userId, month, goal) => req('PUT', `/user-goals/${userId}/${month}`, { goal }),
 
-  getHistory:    ()        => req('GET',    '/history'),
-  addHistory:    (rec)     => req('POST',   '/history', rec),
+  getHistory:      ()        => req('GET',    '/history'),
+  getHistoryItems: ()        => req('GET',    '/history-items'),
+  addHistory:      (rec)     => req('POST',   '/history', rec),
   updateHistory: (id, rec) => req('PUT',    `/history/${id}`, rec),
   deleteRecord:  (id)      => req('DELETE', `/history/${id}`),
   clearHistory:  ()        => req('DELETE', '/history'),
