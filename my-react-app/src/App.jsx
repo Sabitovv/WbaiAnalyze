@@ -905,8 +905,8 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
   };
   const saveUserPattern = async (u, pattern) => {
     try {
-      const updated = await api.updateUser(u.id, { name: u.name, pattern: pattern.trim() || null });
-      setUsers(us => us.map(x => x.id === u.id ? { ...x, name: updated.name, pattern: updated.pattern } : x));
+      await api.updateUser(u.id, { pattern: pattern.trim() || null });
+      setUsers(us => us.map(x => x.id === u.id ? { ...x, pattern: pattern.trim() || null } : x));
     } catch (e) { setErr(e.message); }
   };
   const delUser = async id => {
