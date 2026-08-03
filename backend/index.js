@@ -769,6 +769,34 @@ app.get('/api/reports/monthly', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/api/reports/weekly', async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = parseDateRange(req);
+    const cabId = req.query.cabId;
+    const params = [dateFrom, dateTo];
+    let f = ''; if (cabId && cabId !== 'all') { params.push(parseInt(cabId)); f = 'AND ws.cab_id=$3'; }
+    const { rows } = await pool.query(`WITH s AS (
+      SELECT ws.cab_id, ws.date, ws.rev, ws.cost, ws.comm, ws.ads, ws.cab_comm, ws.log_f, ws.log_r, ws.ret, ws.profit
+      FROM wb_sales ws WHERE ws.date BETWEEN $1 AND $2 ${f}
+    ), q2 AS (
+      SELECT cab_id,date,SUM(qty)::float AS qty FROM wb_import_days WHERE date BETWEEN $1 AND $2 GROUP BY cab_id,date
+    )
+    SELECT TO_CHAR(date_trunc('week', s.date::date + interval '1 day'), 'IYYY-"W"IW') AS week,
+      MIN(s.date)::text AS week_start, MAX(s.date)::text AS week_end,
+      COALESCE(SUM(q2.qty),0)::float AS qty,
+      SUM(s.rev)::float AS rev, SUM(s.cost)::float AS cost, SUM(s.comm)::float AS comm, SUM(s.ads)::float AS ads,
+      SUM(s.cab_comm)::float AS cab_comm, SUM(s.log_f)::float AS log_f, SUM(s.log_r)::float AS log_r,
+      SUM(s.ret)::float AS ret, SUM(s.profit)::float AS profit
+    FROM s LEFT JOIN q2 ON q2.cab_id=s.cab_id AND q2.date=s.date
+    GROUP BY week ORDER BY week`, params);
+    const fnRows = await getFinanceCosts(dateFrom, dateTo, req.query.cabId);
+    applyFinanceToRows(rows, fnRows);
+    const ded = parseFloat((await pool.query("SELECT value FROM app_settings WHERE key='deduction_pct'")).rows[0]?.value||0);
+    rows.forEach(r => { const nr = (+r.rev||0)-(+r.ret||0); const d = nr*ded/100; r.profit = +((+r.profit||0)-d).toFixed(2); r.margin = nr>0 ? +(+r.profit/nr*100).toFixed(2) : 0; r.drr = nr>0 ? +(+r.ads/nr*100).toFixed(2) : 0; });
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/reports/category', async (req, res) => {
   try {
     const { dateFrom, dateTo } = parseDateRange(req);

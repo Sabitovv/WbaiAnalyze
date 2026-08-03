@@ -84,7 +84,7 @@ export const api = {
   getCategoryReport:    (dateFrom, dateTo, cabId = 'all') => req('GET', `/reports/category?dateFrom=${dateFrom}&dateTo=${dateTo}&cabId=${cabId}`),
   getMonthlyReport:     (dateFrom, dateTo, cabId = 'all') => req('GET', `/reports/monthly?dateFrom=${dateFrom}&dateTo=${dateTo}&cabId=${cabId}`),
   getArticleReport:     (dateFrom, dateTo, cabId = 'all') => req('GET', `/reports/article?dateFrom=${dateFrom}&dateTo=${dateTo}&cabId=${cabId}`),
-  getProductReport:     (dateFrom, dateTo, cabId = 'all') => req('GET', `/reports/product?dateFrom=${dateFrom}&dateTo=${dateTo}&cabId=${cabId}`),
+  getWeeklyReport:      (dateFrom, dateTo, cabId = 'all') => req('GET', `/reports/weekly?dateFrom=${dateFrom}&dateTo=${dateTo}&cabId=${cabId}`),
 
   getImportRuns: ({cabId, dateFrom, dateTo, limit = 50} = {}) => {
     const params = new URLSearchParams();

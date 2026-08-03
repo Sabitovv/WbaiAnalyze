@@ -2438,13 +2438,14 @@ function ReportPanel({ history, users, allCabs, isAdmin, userLogin }) {
 
 // ── Сводки ────────────────────────────────────────────────────────────────────
 function SummariesPanel({ allCabs = [] }) {
-  const [type, setType] = useState('day');
+  const [type, setType] = useState('week');
 
   function defaultDatesFor(type) {
-    if (type === 'day') {
-      const d = new Date(); d.setDate(d.getDate() - 1);
-      const y = d.toISOString().split('T')[0];
-      return { from: y, to: y };
+    if (type === 'week') {
+      const d = new Date();
+      const day = d.getDay(); d.setDate(d.getDate() - ((day + 6) % 7));
+      const from = new Date(d); from.setDate(d.getDate() - 7);
+      return { from: from.toISOString().split('T')[0], to: d.toISOString().split('T')[0] };
     }
     if (type === 'month') {
       const d = new Date(); d.setMonth(d.getMonth() - 1);
@@ -2473,7 +2474,7 @@ function SummariesPanel({ allCabs = [] }) {
   }, [type]);
 
   const fetchByType = useCallback(async () => {
-    if (type === 'day') return api.getDailyReport(dateFrom, dateTo, cabId);
+    if (type === 'week') return api.getWeeklyReport(dateFrom, dateTo, cabId);
     if (type === 'category') return api.getCategoryReport(dateFrom, dateTo, cabId);
     if (type === 'month') return api.getMonthlyReport(dateFrom, dateTo, cabId);
     if (type === 'article') return api.getArticleReport(dateFrom, dateTo, cabId);
@@ -2530,7 +2531,7 @@ function SummariesPanel({ allCabs = [] }) {
           <div className="field" style={{ minWidth: 180 }}>
             <label className="form-label">Тип сводки</label>
             <select className="form-input" value={type} onChange={e => setType(e.target.value)}>
-              <option value="day">По дням</option>
+              <option value="week">По неделям</option>
               <option value="category">По категориям</option>
               <option value="month">По месяцам</option>
               <option value="article">По артикулам</option>
@@ -2544,11 +2545,17 @@ function SummariesPanel({ allCabs = [] }) {
               {allCabs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
-          {type === 'day' ? (
+          {type === 'week' ? (
+            <>
             <div className="field">
-              <label className="form-label">Дата</label>
-              <input type="date" className="form-input" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setDateTo(e.target.value); }} />
+              <label className="form-label">С</label>
+              <input type="date" className="form-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
             </div>
+            <div className="field">
+              <label className="form-label">По</label>
+              <input type="date" className="form-input" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+            </div>
+            </>
           ) : type === 'month' ? (
             <>
             <div className="field">
@@ -3879,7 +3886,6 @@ export default function App() {
 
   const NAV = [
     { k: 'dashboard', l: 'Дашборд' },
-    { k: 'calc',   l: 'Калькулятор' },
     { k: 'history', l: 'История' },
     { k: 'report',  l: 'Отчёт' },
     { k: 'managers_report', l: 'Менеджеры' },
