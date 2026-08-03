@@ -539,8 +539,8 @@ app.get('/api/dashboard', async (req, res) => {
              WHERE fr.date_to >= $1 AND fr.date_from <= $2 ${finCabFilter}
              GROUP BY fr.cab_id) f
        JOIN cabs c ON c.id = f.cab_id
-       LEFT JOIN (SELECT cab_id, SUM(sum)::float AS ads FROM wb_advert_stats WHERE date BETWEEN $1 AND $2 ${cabFilter} GROUP BY cab_id) a ON a.cab_id = f.cab_id
-       LEFT JOIN (SELECT cab_id, SUM(cost)::float AS cost FROM wb_sales WHERE date BETWEEN $1 AND $2 ${cabFilter.replace(/a\./g,'ws.')} GROUP BY cab_id) s ON s.cab_id = f.cab_id
+       LEFT JOIN (SELECT cab_id, SUM(sum)::float AS ads FROM wb_advert_stats a WHERE a.date BETWEEN $1 AND $2 ${cabFilter} GROUP BY cab_id) a ON a.cab_id = f.cab_id
+       LEFT JOIN (SELECT cab_id, SUM(cost)::float AS cost FROM wb_sales ws WHERE ws.date BETWEEN $1 AND $2 ${cabFilter.replace(/a\./g,'ws.')} GROUP BY cab_id) s ON s.cab_id = f.cab_id
        ORDER BY f.rev DESC`, finP);
     
     for (const r of byCab) {
