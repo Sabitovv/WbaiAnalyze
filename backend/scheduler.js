@@ -124,7 +124,7 @@ async function runImport(pool, opts = {}) {
     // concurrency=1 + pause 30s между чанками + cooldown 90s дают ~1 запрос/90с.
     // Пустые ответы больше не ретраим, поэтому 50 кампаний за раз безопасно.
     const adsOpts = { chunkSize: 50, chunkPauseMs: 30000 };
-    const concurrency = 1;
+    const concurrency = cabs.length; // все кабинеты параллельно (у каждого свой токен WB)
 
     console.log(`WB scheduler: ${cabs.length} кабинет(ов), параллельность ${concurrency}`);
 
