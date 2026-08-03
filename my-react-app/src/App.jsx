@@ -2699,41 +2699,16 @@ function ManagersReportPanel() {
   const [err, setErr] = useState('');
 
   useEffect(() => {
-    let cancelled = false;
     api.getUsers().then(rows => {
-      if (cancelled) return;
       const withPattern = rows.filter(u => u.pattern && String(u.pattern).trim());
       setUsers(withPattern);
       if (withPattern.length && !userId) setUserId(String(withPattern[0].id));
-    }).catch(e => { if (!cancelled) setErr(e.message); });
-    return () => { cancelled = true; };
-  }, [userId]);
+    }).catch(e => setErr(e.message));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const refresh = useCallback(async () => {
-    setLoading(true); setErr('');
-    try {
-      if (mode === 'manager') {
-        if (!userId) return;
-        const [r, d, c] = await Promise.all([
-          api.getUserReport(userId, dateFrom, dateTo),
-          api.getUserDetail(userId, dateFrom, dateTo),
-          api.getUserCampaigns(userId, dateFrom, dateTo),
-        ]);
-        setReport(r);
-        setDetail(d);
-        setCampaigns(c);
-      } else {
-        const u = await api.getUnassignedCampaigns(dateFrom, dateTo);
-        setUnassigned(u);
-      }
-    } catch (e) { setErr(e.message); }
-    finally { setLoading(false); }
-  }, [mode, userId, dateFrom, dateTo]);
-
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => {
     if (mode === 'manager' && !userId) return;
-    let cancelled = false;
     setLoading(true); setErr('');
     if (mode === 'manager') {
       Promise.all([
@@ -2741,25 +2716,43 @@ function ManagersReportPanel() {
         api.getUserDetail(userId, dateFrom, dateTo),
         api.getUserCampaigns(userId, dateFrom, dateTo),
       ]).then(([r, d, c]) => {
-        if (cancelled) return;
         setReport(r);
         setDetail(d);
         setCampaigns(c);
         setLoading(false);
       }).catch(e => {
-        if (!cancelled) { setErr(e.message); setLoading(false); }
+        setErr(e.message); setLoading(false);
       });
     } else {
       api.getUnassignedCampaigns(dateFrom, dateTo).then(u => {
-        if (cancelled) return;
         setUnassigned(u);
         setLoading(false);
       }).catch(e => {
-        if (!cancelled) { setErr(e.message); setLoading(false); }
+        setErr(e.message); setLoading(false);
       });
     }
-    return () => { cancelled = true; };
   }, [mode, userId, dateFrom, dateTo]);
+
+  const refresh = () => {
+    setLoading(true); setErr('');
+    if (mode === 'manager' && userId) {
+      Promise.all([
+        api.getUserReport(userId, dateFrom, dateTo),
+        api.getUserDetail(userId, dateFrom, dateTo),
+        api.getUserCampaigns(userId, dateFrom, dateTo),
+      ]).then(([r, d, c]) => {
+        setReport(r);
+        setDetail(d);
+        setCampaigns(c);
+        setLoading(false);
+      }).catch(e => { setErr(e.message); setLoading(false); });
+    } else if (mode === 'unassigned') {
+      api.getUnassignedCampaigns(dateFrom, dateTo).then(u => {
+        setUnassigned(u);
+        setLoading(false);
+      }).catch(e => { setErr(e.message); setLoading(false); });
+    }
+  };
 
   const totals = useMemo(() => {
     const rev = report.reduce((s, r) => s + num(r.rev), 0);
