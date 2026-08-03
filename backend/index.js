@@ -774,13 +774,20 @@ app.get('/api/reports/weekly', async (req, res) => {
     const { dateFrom, dateTo } = parseDateRange(req);
     const cabId = req.query.cabId;
     const params = [dateFrom, dateTo];
-    let f = ''; if (cabId && cabId !== 'all') { params.push(parseInt(cabId)); f = 'AND ws.cab_id=$3'; }
-    const { rows } = await pool.query(`WITH s AS (
-      SELECT ws.cab_id, ws.date, ws.rev, ws.cost, ws.comm, ws.ads, ws.cab_comm, ws.log_f, ws.log_r, ws.ret, ws.profit
-      FROM wb_sales ws WHERE ws.date BETWEEN $1 AND $2 ${f}
-    ), q2 AS (
-      SELECT cab_id,date,SUM(qty)::float AS qty FROM wb_import_days WHERE date BETWEEN $1 AND $2 GROUP BY cab_id,date
-    )
+    let f = ''; if (cabId && cabId !== 'all') { params.push(parseInt(cabId)); f = 'AND d.cab_id=$3'; }
+    let f2 = ''; if (cabId && cabId !== 'all') { f2 = 'AND ws.cab_id=$3'; }
+    const { rows } = await pool.query(`WITH q AS (
+      SELECT DISTINCT ON (d.cab_id,d.date,d.article) d.cab_id,d.date,d.article,d.qty
+      FROM wb_manager_sales_detail d WHERE d.date BETWEEN $1 AND $2 ${f} AND BTRIM(d.article)<>''
+        AND (COALESCE(d.rev,0)<>0 OR COALESCE(d.cost,0)<>0 OR COALESCE(d.comm,0)<>0 OR COALESCE(d.ads,0)<>0 OR COALESCE(d.profit,0)<>0)
+      ORDER BY d.cab_id,d.date,d.article,(d.user_id IS NULL),d.updated_at DESC,d.id DESC
+    ), q2 AS (SELECT cab_id,date,SUM(qty) AS qty FROM q GROUP BY cab_id,date),
+    s AS (SELECT ws.cab_id,ws.date,SUM(ws.rev)AS rev,SUM(ws.cost)AS cost,SUM(ws.comm)AS comm,SUM(ws.ads)AS ads,
+      SUM(ws.cab_comm)AS cab_comm,SUM(ws.log_f)AS log_f,SUM(ws.log_r)AS log_r,
+      SUM(CASE WHEN COALESCE(ws.ret,0)<>0 THEN ws.ret ELSE GREATEST(ws.rev-ws.profit-ws.cost-ws.ads-ws.comm-ws.cab_comm-ws.log_f-ws.log_r,0) END)AS ret,
+      SUM(ws.profit)AS profit
+    FROM wb_sales ws WHERE ws.date BETWEEN $1 AND $2 ${f2}
+    GROUP BY ws.cab_id,ws.date)
     SELECT TO_CHAR(date_trunc('week', s.date::date + interval '1 day'), 'IYYY-"W"IW') AS week,
       MIN(s.date)::text AS week_start, MAX(s.date)::text AS week_end,
       COALESCE(SUM(q2.qty),0)::float AS qty,
