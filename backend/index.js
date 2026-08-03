@@ -141,7 +141,7 @@ app.post('/api/auth/register', async (req, res) => {
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 app.get('/api/users', async (_req, res) => {
-  const { rows } = await pool.query(`SELECT id,login,name,role,created_at,salary_pct FROM users ORDER BY id`);
+  const { rows } = await pool.query(`SELECT id,login,name,role,created_at,salary_pct,pattern FROM users ORDER BY id`);
   const { rows: cabRows } = await pool.query(`SELECT user_id, cab_id FROM user_cabs`);
   const cabMap = {};
   cabRows.forEach(r => {
