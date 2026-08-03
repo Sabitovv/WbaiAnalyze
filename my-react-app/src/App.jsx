@@ -3879,6 +3879,8 @@ export default function App() {
 
   const NAV = [
     { k: 'dashboard', l: 'Дашборд' },
+    { k: 'calc',   l: 'Калькулятор' },
+    { k: 'history', l: 'История' },
     { k: 'report',  l: 'Отчёт' },
     { k: 'managers_report', l: 'Менеджеры' },
     { k: 'summaries', l: 'Сводки' },
@@ -4194,6 +4196,8 @@ export default function App() {
             <AutoDashboard user={user} />
           </div>
         )}
+
+        {appTab === 'calc' && <CalculatorSection />}
 
         {appTab === 'history' && (
           <HistoryPanel

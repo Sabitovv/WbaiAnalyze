@@ -9,11 +9,11 @@ app.use(cors());
 app.use(express.json());
 
 // ── Создать таблицу user_cabs если нет ───────────────────────────────────────
-pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS wb_token TEXT`);
-pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS cab_type TEXT`);
-pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS commission NUMERIC`);
-pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS wb_store_id TEXT`);
-pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS currency TEXT`);
+pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS wb_token TEXT`).catch(e => console.error('ALTER wb_token:', e.message));
+pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS cab_type TEXT`).catch(e => console.error('ALTER cab_type:', e.message));
+pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS commission NUMERIC`).catch(e => console.error('ALTER commission:', e.message));
+pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS wb_store_id TEXT`).catch(e => console.error('ALTER wb_store_id:', e.message));
+pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS currency TEXT`).catch(e => console.error('ALTER currency:', e.message));
 pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS buyout INTEGER DEFAULT 88`);
 pool.query(`
   CREATE TABLE IF NOT EXISTS user_cabs (
@@ -220,6 +220,56 @@ app.delete('/api/catalog/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/catalog/import-commission', async (req, res) => {
+  try {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    await new Promise((resolve, reject) => { req.on('end', resolve); req.on('error', reject); });
+    const buf = Buffer.concat(chunks);
+    const match = /Content-Type:[^\r\n]*\s([\s\S]*?)------/.exec(buf.toString('latin1'));
+    if (!match) return res.status(400).json({ error: 'Файл не распознан' });
+    const body = match[1];
+    const headerEnd = body.indexOf('\r\n\r\n');
+    if (headerEnd < 0) return res.status(400).json({ error: 'Неверный формат файла' });
+    const fileData = Buffer.from(body.slice(headerEnd + 4).trim(), 'latin1');
+    const XLSX = require('xlsx');
+    const wb = XLSX.read(fileData);
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+    const rates = [];
+    for (const r of rows) {
+      if (!r || r.length < 2) continue;
+      const article = String(r[0]).replace(/[^0-9]/g, '');
+      const comm = parseFloat(String(r[1]).replace(',', '.'));
+      if (article && !isNaN(comm) && comm > 0) rates.push({ article, comm });
+      else if (article && !isNaN(comm)) rates.push({ article, comm: 0 });
+    }
+    res.json({ rates, count: rates.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/catalog/apply-commission', async (req, res) => {
+  try {
+    const { rates } = req.body;
+    if (!Array.isArray(rates)) return res.status(400).json({ error: 'rates должен быть массивом' });
+    const client = await pool.connect();
+    let updated = 0;
+    try {
+      await client.query('BEGIN');
+      for (const r of rates) {
+        if (!r.article) continue;
+        const { rowCount } = await client.query(
+          `UPDATE catalog SET comm=$1 WHERE article=$2`, [r.comm, r.article]
+        );
+        updated += rowCount;
+      }
+      await client.query('COMMIT');
+    } catch (err) { await client.query('ROLLBACK'); throw err; }
+    finally { client.release(); }
+    res.json({ updated });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Cabs ─────────────────────────────────────────────────────────────────────
 app.get('/api/cabs', async (_req, res) => {
   const { rows } = await pool.query(`SELECT * FROM cabs ORDER BY id`);
@@ -245,6 +295,12 @@ app.put('/api/cabs/:id', async (req, res) => {
     `UPDATE cabs SET name=COALESCE($1,name), buyout=COALESCE($2,buyout) WHERE id=$3 RETURNING *`,
     [name, buyout, req.params.id]
   );
+  res.json(rows[0]);
+});
+
+app.get('/api/cabs/:id', async (req, res) => {
+  const { rows } = await pool.query(`SELECT * FROM cabs WHERE id=$1`, [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'Не найден' });
   res.json(rows[0]);
 });
 
@@ -821,8 +877,10 @@ app.get('/api/reports/product', async (req, res) => {
 });
 
 const scheduler = require('./scheduler');
+const wb = require('./wb');
 app.use('/api/wb', (function() {
   const r = require('express').Router();
+
   r.get('/scheduler-status', async (_req, res) => {
     try {
       const { rows } = await pool.query(`SELECT key,value FROM app_settings WHERE key IN ('scheduler_last_run','scheduler_last_deep_run')`);
@@ -830,12 +888,21 @@ app.use('/api/wb', (function() {
       res.json({ ...scheduler.getStatus(), settings: s });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
+
+  r.post('/scheduler-run', async (_req, res) => {
+    try {
+      const result = await scheduler.runImport(pool);
+      res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   r.get('/import-status', async (_req, res) => {
     try {
       const { rows } = await pool.query(`SELECT c.id, c.name, r.status, r.issues->0->>'message' AS issue, r.started_at FROM cabs c LEFT JOIN LATERAL (SELECT * FROM wb_import_runs WHERE cab_id=c.id ORDER BY started_at DESC LIMIT 1) r ON true ORDER BY c.id`);
       res.json(rows);
     } catch(e) { res.status(500).json({ error: e.message }); }
   });
+
   r.get('/import-runs', async (req, res) => {
     try {
       const limit = Math.min(parseInt(req.query.limit)||50, 200);
@@ -843,6 +910,7 @@ app.use('/api/wb', (function() {
       res.json(rows);
     } catch(e) { res.status(500).json({ error: e.message }); }
   });
+
   r.get('/order-stats', async (req, res) => {
     try {
       const p = [req.query.dateFrom||'2026-01-01', req.query.dateTo||'2099-12-31'];
@@ -851,6 +919,7 @@ app.use('/api/wb', (function() {
       res.json(rows);
     } catch(e) { res.status(500).json({ error: e.message }); }
   });
+
   r.get('/finance-reports', async (req, res) => {
     try {
       const p = [req.query.dateFrom||'2026-01-01', req.query.dateTo||'2099-12-31'];
@@ -859,6 +928,92 @@ app.use('/api/wb', (function() {
       res.json(rows);
     } catch(e) { res.status(500).json({ error: e.message }); }
   });
+
+  r.post('/sync/:id', async (req, res) => {
+    try {
+      const { rows } = await pool.query(`SELECT * FROM cabs WHERE id=$1`, [req.params.id]);
+      if (!rows[0]) return res.status(404).json({ error: 'Кабинет не найден' });
+      const result = await wb.syncCab(pool, rows[0]);
+      res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  r.post('/import/:id', async (req, res) => {
+    try {
+      const { rows } = await pool.query(`SELECT * FROM cabs WHERE id=$1`, [req.params.id]);
+      if (!rows[0]) return res.status(404).json({ error: 'Кабинет не найден' });
+      const { dateFrom, dateTo } = req.query;
+      const result = await wb.importCabSales(pool, rows[0], dateFrom, dateTo);
+      res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  r.post('/import-all', async (req, res) => {
+    try {
+      const { dateFrom, dateTo } = req.query;
+      const result = await scheduler.runImport(pool, { dateFrom, dateTo });
+      res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  r.post('/sync-products/:cabId', async (req, res) => {
+    try {
+      const { rows } = await pool.query(`SELECT * FROM cabs WHERE id=$1`, [req.params.cabId]);
+      if (!rows[0]) return res.status(404).json({ error: 'Кабинет не найден' });
+      const result = await wb.syncCabProducts(pool, rows[0]);
+      res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  r.post('/seed-demo/:id', async (req, res) => {
+    try {
+      const { rows } = await pool.query(`SELECT * FROM cabs WHERE id=$1`, [req.params.id]);
+      if (!rows[0]) return res.status(404).json({ error: 'Кабинет не найден' });
+      const days = parseInt(req.query.days) || 7;
+      const result = await wb.seedDemoSales(pool, rows[0], days);
+      res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  r.post('/seed-demo-ads/:id', async (req, res) => {
+    try {
+      const { rows } = await pool.query(`SELECT * FROM cabs WHERE id=$1`, [req.params.id]);
+      if (!rows[0]) return res.status(404).json({ error: 'Кабинет не найден' });
+      const days = parseInt(req.query.days) || 7;
+      const result = await wb.seedDemoAds(pool, rows[0], days);
+      res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  r.get('/adverts/:id', async (req, res) => {
+    try {
+      const { rows } = await pool.query(`SELECT * FROM cabs WHERE id=$1`, [req.params.id]);
+      if (!rows[0]) return res.status(404).json({ error: 'Кабинет не найден' });
+      const token = wb.getCabToken(rows[0]);
+      if (!token) return res.status(400).json({ error: 'Нет WB токена' });
+      const campaigns = await wb.fetchAdverts(token);
+      res.json(campaigns);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  r.get('/advert-metrics', async (req, res) => {
+    try {
+      const { cabId, dateFrom, dateTo } = req.query;
+      const p = [dateFrom || '2026-01-01', dateTo || '2099-12-31'];
+      let f = '';
+      if (cabId && cabId !== 'all') { p.push(parseInt(cabId)); f = 'AND a.cab_id=$3'; }
+      const { rows } = await pool.query(
+        `SELECT a.cab_id, c.name AS cab_name, a.date, SUM(a.views)::bigint AS views,
+                SUM(a.clicks)::bigint AS clicks, SUM(a.orders)::bigint AS orders,
+                ROUND(SUM(a.sum)::numeric,2) AS sum
+         FROM wb_advert_stats a JOIN cabs c ON c.id=a.cab_id
+         WHERE a.date BETWEEN $1 AND $2 ${f}
+         GROUP BY a.cab_id, c.name, a.date
+         ORDER BY a.date DESC, a.cab_id`, p);
+      res.json(rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   return r;
 })());
 
