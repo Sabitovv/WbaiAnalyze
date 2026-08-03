@@ -361,15 +361,17 @@ async function migrate() {
       );
     `);
 
-    // Дефолтный admin
+    // Дефолтный admin — обновляем пароль при каждом деплое (хеш от целевой машины)
     const { rows } = await client.query(`SELECT id FROM users WHERE login='admin'`);
+    const bcrypt = require('bcryptjs');
+    const hash = await bcrypt.hash('admin123', 10);
     if (!rows.length) {
-      const bcrypt = require('bcryptjs');
-      const hash = await bcrypt.hash('admin123', 10);
       await client.query(
         `INSERT INTO users (login, password, name, role) VALUES ('admin', $1, 'Администратор', 'admin')`,
         [hash]
       );
+    } else {
+      await client.query(`UPDATE users SET password=$1 WHERE login='admin'`, [hash]);
     }
 
     // Дефолтные товары
