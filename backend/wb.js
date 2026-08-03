@@ -2114,12 +2114,21 @@ async function importCabAds(pool, cab, dateFrom, dateTo, isKZT = false, opts = {
   const chunkSize = Number.isFinite(requestedChunkSize) ? Math.max(1, requestedChunkSize) : 5;
   const chunkPauseMs = Number.isFinite(requestedChunkPause) ? Math.max(0, requestedChunkPause) : 60000;
   const totalChunks = Math.ceil(ids.length / chunkSize);
+  const dateRanges = [];
+  for (let d = new Date(dateFrom); d < new Date(dateTo); d.setDate(d.getDate() + 30)) {
+    const subFrom = new Date(d).toISOString().split('T')[0];
+    const subToDate = new Date(d); subToDate.setDate(subToDate.getDate() + 29);
+    const subTo = subToDate >= new Date(dateTo) ? dateTo : subToDate.toISOString().split('T')[0];
+    dateRanges.push([subFrom, subTo]);
+  }
   for (let i = 0; i < ids.length; i += chunkSize) {
     const chunk = ids.slice(i, i + chunkSize);
     const chunkNum = Math.floor(i / chunkSize) + 1;
     console.log(`WB ads cab ${cab.id}: chunk ${chunkNum}/${totalChunks} (${chunk.length} campaigns)`);
-    const chunkStats = await fetchAdvertStatsForImport(token, chunk, dateFrom, dateTo);
-    if (Array.isArray(chunkStats)) allStats.push(...chunkStats);
+    for (const [subFrom, subTo] of dateRanges) {
+      const chunkStats = await fetchAdvertStatsForImport(token, chunk, subFrom, subTo);
+      if (Array.isArray(chunkStats)) allStats.push(...chunkStats);
+    }
     if (i + chunkSize < ids.length) await delay(chunkPauseMs);
   }
 
