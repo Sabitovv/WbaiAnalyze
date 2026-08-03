@@ -9,6 +9,12 @@ app.use(cors());
 app.use(express.json());
 
 // ── Создать таблицу user_cabs если нет ───────────────────────────────────────
+pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS wb_token TEXT`);
+pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS cab_type TEXT`);
+pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS commission NUMERIC`);
+pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS wb_store_id TEXT`);
+pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS currency TEXT`);
+pool.query(`ALTER TABLE cabs ADD COLUMN IF NOT EXISTS buyout INTEGER DEFAULT 88`);
 pool.query(`
   CREATE TABLE IF NOT EXISTS user_cabs (
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -366,11 +372,88 @@ app.put('/api/users/:id/password', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.put('/api/users/:id', async (req, res) => {
+  const { name, pattern } = req.body;
+  await pool.query(`UPDATE users SET name=$1, pattern=$2 WHERE id=$3`, [name, pattern, req.params.id]);
+  res.json({ ok: true });
+});
+
 // ── Salary rate ───────────────────────────────────────────────────────────────
 app.put('/api/users/:id/salary', async (req, res) => {
   const { salary_pct } = req.body;
   await pool.query(`UPDATE users SET salary_pct=$1 WHERE id=$2`, [salary_pct, req.params.id]);
   res.json({ ok: true });
+});
+
+// ── Manager reports ────────────────────────────────────────────────────────────
+app.get('/api/users/report', async (req, res) => {
+  try {
+    const { userId, dateFrom, dateTo } = req.query;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const { rows } = await pool.query(
+      `SELECT ms.cab_id, c.name AS cab_name, ms.date, ms.rev, ms.ads, ms.cost, ms.comm,
+              ms.cab_comm, ms.log_f, ms.log_r, ms.ret, ms.profit, ms.margin, ms.drr
+       FROM wb_manager_sales ms JOIN cabs c ON c.id=ms.cab_id
+       WHERE ms.user_id=$1 AND ms.date BETWEEN $2 AND $3
+       ORDER BY ms.date DESC, ms.cab_id`,
+      [parseInt(userId), dateFrom, dateTo]
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/users/report-detail', async (req, res) => {
+  try {
+    const { userId, dateFrom, dateTo } = req.query;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const { rows } = await pool.query(
+      `SELECT d.cab_id, c.name AS cab_name, d.date, d.article, COALESCE(cat.name,d.article) AS product,
+              d.subject, d.qty, d.rev, d.cost, d.comm, d.cab_comm, d.log_f, d.log_r, d.ret,
+              d.ads, d.profit, d.user_id
+       FROM wb_manager_sales_detail d
+       JOIN cabs c ON c.id=d.cab_id
+       LEFT JOIN catalog cat ON cat.article=d.article AND cat.article IS NOT NULL
+       WHERE d.user_id=$1 AND d.date BETWEEN $2 AND $3
+       ORDER BY d.date DESC, d.cab_id, d.rev DESC`,
+      [parseInt(userId), dateFrom, dateTo]
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/users/:id/campaigns', async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = req.query;
+    const { rows } = await pool.query(
+      `SELECT a.cab_id, c.name AS cab_name, a.campaign_id, a.campaign_name, COUNT(DISTINCT a.date)::int AS days,
+              SUM(a.views)::bigint AS views, SUM(a.clicks)::bigint AS clicks, SUM(a.orders)::bigint AS orders,
+              ROUND(SUM(a.sum)::numeric,2) AS sum
+       FROM wb_advert_stats a JOIN cabs c ON c.id=a.cab_id
+       WHERE a.user_id=$1 AND a.date BETWEEN $2 AND $3
+       GROUP BY a.cab_id, c.name, a.campaign_id, a.campaign_name
+       ORDER BY SUM(a.sum) DESC`,
+      [parseInt(req.params.id), dateFrom, dateTo]
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/campaigns/unassigned', async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = req.query;
+    const { rows } = await pool.query(
+      `SELECT a.cab_id, c.name AS cab_name, a.campaign_id, a.campaign_name,
+              COUNT(DISTINCT a.date)::int AS days, SUM(a.views)::bigint AS views,
+              SUM(a.clicks)::bigint AS clicks, SUM(a.orders)::bigint AS orders,
+              ROUND(SUM(a.sum)::numeric,2) AS sum
+       FROM wb_advert_stats a JOIN cabs c ON c.id=a.cab_id
+       WHERE a.user_id IS NULL AND a.date BETWEEN $1 AND $2
+       GROUP BY a.cab_id, c.name, a.campaign_id, a.campaign_name
+       ORDER BY SUM(a.sum) DESC`,
+      [dateFrom, dateTo]
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── User Goals (планы на месяц) ───────────────────────────────────────────────
@@ -527,8 +610,8 @@ app.get('/api/dashboard', async (req, res) => {
     
     // Per-cabinet breakdown from finance reports + ads + cost
     const { rows: byCab } = await pool.query(
-      `SELECT f.cab_id, c.name AS cab_name, c.cab_type,
-              f.rev, f.for_pay, f.logistics,
+`SELECT f.cab_id, c.name AS cab_name,
+        f.rev, f.for_pay, f.logistics,
               COALESCE(a.ads::float,0) AS ads,
               COALESCE(s.cost::float,0) AS cost
        FROM (SELECT fr.cab_id,
