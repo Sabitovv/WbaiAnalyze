@@ -430,7 +430,13 @@ app.put('/api/users/:id/password', async (req, res) => {
 
 app.put('/api/users/:id', async (req, res) => {
   const { name, pattern } = req.body;
-  await pool.query(`UPDATE users SET name=$1, pattern=$2 WHERE id=$3`, [name, pattern, req.params.id]);
+  const updates = [], vals = [];
+  if (name !== undefined) { updates.push(`name=$${updates.length + 1}`); vals.push(name); }
+  if (pattern !== undefined) { updates.push(`pattern=$${updates.length + 1}`); vals.push(pattern); }
+  if (updates.length) {
+    vals.push(req.params.id);
+    await pool.query(`UPDATE users SET ${updates.join(', ')} WHERE id=$${vals.length}`, vals);
+  }
   res.json({ ok: true });
 });
 

@@ -1332,7 +1332,7 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
                       ) : userCabNames.length > 0 ? (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                           {userCabNames.map(n => (
-                            <span key={n} className="badge" style={{ fontSize: 10, background: 'rgba(255,255,255,0.06)' }}>{n}</span>
+                            <span key={n} className="badge" style={{ fontSize: 10, background: 'rgba(255,255,255,0.06)' }}>{n} ({u.name || u.login})</span>
                           ))}
                         </div>
                       ) : (
