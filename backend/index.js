@@ -997,6 +997,14 @@ app.use('/api/wb', (function() {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  r.post('/reassign-campaigns', async (_req, res) => {
+    try {
+      const { refreshStoredManagerAssignments } = require('./managerAssignments');
+      const result = await refreshStoredManagerAssignments(pool);
+      res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   r.post('/sync-products/:cabId', async (req, res) => {
     try {
       const { rows } = await pool.query(`SELECT * FROM cabs WHERE id=$1`, [req.params.cabId]);

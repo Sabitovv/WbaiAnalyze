@@ -4,6 +4,7 @@
 // последовательно с большими паузами.
 
 const { importCabSales, syncCab } = require('./wb');
+const { reassignStoredCampaigns } = require('./managerAssignments');
 
 let isRunning = false;
 let lastResult = null;
@@ -102,6 +103,12 @@ async function runImport(pool, opts = {}) {
   let error = null;
 
   try {
+    // Пересчитываем назначение кампаний менеджерам по шаблонам
+    try {
+      const updated = await reassignStoredCampaigns(pool);
+      if (updated) console.log(`WB scheduler: обновлены назначения кампаний: ${updated} строк`);
+    } catch (e) { console.error('WB scheduler: ошибка reassign:', e.message); }
+
     const { rows: cabs } = await pool.query(
       `SELECT * FROM cabs WHERE wb_token IS NOT NULL AND wb_token <> '' ORDER BY id`
     );
