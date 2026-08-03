@@ -16,7 +16,7 @@ services:
       timeout: 5s
       retries: 5
 
-  backend:
+   backend:
     build: ./backend
     depends_on:
       db:
@@ -27,13 +27,20 @@ services:
       PORT: 3001
       WB_TOKENS: ${WB_TOKENS:-[]}
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/api/rate || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   frontend:
     build: ./my-react-app
     ports:
       - "3000:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
