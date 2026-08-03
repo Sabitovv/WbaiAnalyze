@@ -16,6 +16,10 @@ function logRub(w, d, h) {
 
 const fmt  = n => { const a = Math.round(Math.abs(n)); return (n < 0 ? '−' : '') + a.toLocaleString('ru'); };
 const fmtP = n => (isNaN(n) || !isFinite(n)) ? '0.0' : n.toFixed(1);
+const fmtRub = n => {
+  const a = Math.abs(n);
+  return (n < 0 ? '−' : '') + a.toLocaleString('ru', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
+};
 const num  = v => parseFloat(String(v).replace(/\s/g, '').replace(',', '.')) || 0;
 const toDay = () => new Date().toISOString().split('T')[0];
 const initials = name => (name || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
@@ -67,6 +71,14 @@ function kpiColor(type, val) {
   if (type === 'profit') return val >= 0  ? 'var(--green-txt)' : 'var(--red-txt)';
   return 'var(--blue-txt)';
 }
+
+const IMPORT_STATUS = {
+  provisional: { label: 'Предварительно', className: 'badge-blue' },
+  verified: { label: 'Проверено', className: 'badge-green' },
+  blocked: { label: 'Заблокировано', className: 'badge-red' },
+  failed: { label: 'Заблокировано', className: 'badge-red' },
+  running: { label: 'Выполняется', className: 'badge-blue' },
+};
 
 function filterByRange(list, dateField, { period, dateFrom, dateTo }) {
   if (dateFrom || dateTo) {
@@ -174,7 +186,7 @@ function LoginScreen({ onLogin }) {
 
 // ── Модалка редактирования товара ─────────────────────────────────────────────
 function ProductModal({ prod, onSave, onClose }) {
-  const [form,   setForm]   = useState({ name: prod.name || '', cost: prod.cost || 0, comm: prod.comm || 25, w: prod.w || 0, d: prod.d || 0, h: prod.h || 0 });
+  const [form,   setForm]   = useState({ name: prod.name || '', article: prod.article || '', cost: prod.cost || 0, comm: prod.comm || 25, w: prod.w || 0, d: prod.d || 0, h: prod.h || 0 });
   const [saving, setSaving] = useState(false);
   const [err,    setErr]    = useState('');
 
@@ -186,7 +198,7 @@ function ProductModal({ prod, onSave, onClose }) {
     e.preventDefault();
     if (!form.name.trim()) return setErr('Введите название');
     setSaving(true);
-    try { await onSave({ ...prod, ...form, cost: +form.cost, comm: +form.comm, w: +form.w, d: +form.d, h: +form.h }); }
+    try { await onSave({ ...prod, ...form, cost: +form.cost, comm: +form.comm, w: +form.w, d: +form.d, h: +form.h, article: form.article.trim() }); }
     catch (e) { setErr(e.message); setSaving(false); }
   };
 
@@ -201,6 +213,10 @@ function ProductModal({ prod, onSave, onClose }) {
           <div className="field" style={{ marginBottom: 16 }}>
             <label className="form-label">Название товара</label>
             <input className="form-input" value={form.name} onChange={set('name')} placeholder="Название" autoFocus />
+          </div>
+          <div className="field" style={{ marginBottom: 16 }}>
+            <label className="form-label">Артикул WB</label>
+            <input className="form-input" value={form.article} onChange={set('article')} placeholder="Как в личном кабинете WB" />
           </div>
           <div className="form-grid-2" style={{ marginBottom: 16 }}>
             <div>
@@ -281,9 +297,8 @@ function ProdRow({ row, catalog, rate, coeff, isAdmin, onUpdate, onDel }) {
 }
 
 // ── Панель результата ─────────────────────────────────────────────────────────
-function ResultPanel({ c }) {
-  const profitColor = c.profit >= 0 ? 'var(--green-txt)' : 'var(--red-txt)';
-  const Row = ({ label, value, color, note }) => (
+function ResultRow({ label, value, color, note }) {
+  return (
     <div className="result-row">
       <span style={{ color: 'var(--txt2)', fontSize: 12 }}>
         {label}{note && <span style={{ fontSize: 10, color: 'var(--txt3)', marginLeft: 4 }}>({note})</span>}
@@ -291,6 +306,10 @@ function ResultPanel({ c }) {
       <span style={{ fontWeight: 600, color, fontSize: 13 }}>{value}</span>
     </div>
   );
+}
+
+function ResultPanel({ c }) {
+  const profitColor = c.profit >= 0 ? 'var(--green-txt)' : 'var(--red-txt)';
 
   return (
     <div className="card" style={{ padding: '20px 24px' }}>
@@ -309,17 +328,188 @@ function ResultPanel({ c }) {
         ))}
       </div>
       <hr className="divider" />
-      <Row label="Выручка"             value={'+' + fmt(c.rev) + ' ₸'}     color="var(--blue-txt)" />
-      <Row label="Себестоимость"       value={'−' + fmt(c.cost) + ' ₸'}    color="var(--red-txt)" />
-      <Row label="Реклама"             value={'−' + fmt(c.ads) + ' ₸'}     color="var(--yellow-txt)" note={c.adsRub ? `${fmt(c.adsRub)} ₽` : null} />
-      <Row label="Комиссия WB"         value={'−' + fmt(c.comm) + ' ₸'}    color="var(--red-txt)" />
-      <Row label="Логистика доставки"  value={'−' + fmt(c.logF) + ' ₸'}    color="var(--txt2)" note="по объёму" />
-      <Row label="Логистика возвратов" value={'−' + fmt(c.logR) + ' ₸'}    color="var(--txt2)" note="50₽×возвр" />
-      <Row label="Потери на возвраты"  value={'−' + fmt(c.ret) + ' ₸'}     color="var(--red-txt)" note="(1−выкуп)%" />
+      <ResultRow label="Выручка"             value={'+' + fmt(c.rev) + ' ₸'}     color="var(--blue-txt)" />
+      <ResultRow label="Себестоимость"       value={'−' + fmt(c.cost) + ' ₸'}    color="var(--red-txt)" />
+      <ResultRow label="Реклама"             value={'−' + fmt(c.ads) + ' ₸'}     color="var(--yellow-txt)" note={c.adsRub ? `${fmt(c.adsRub)} ₽` : null} />
+      <ResultRow label="Комиссия WB"         value={'−' + fmt(c.comm) + ' ₸'}    color="var(--red-txt)" />
+      {c.isIU && (
+        <ResultRow label="Эквайринг (5%)" value={'−' + fmt(c.cabComm) + ' ₸'} color="var(--red-txt)" />
+      )}
+      {!c.isIU && (
+        <>
+          <ResultRow label="Логистика доставки"  value={'−' + fmt(c.logF) + ' ₸'} color="var(--txt2)" note="по объёму" />
+          <ResultRow label="Логистика возвратов" value={'−' + fmt(c.logR) + ' ₸'} color="var(--txt2)" note="50₽×возвр" />
+        </>
+      )}
       <div className="result-total" style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 4 }}>
         <span>Прибыль</span>
         <span style={{ color: profitColor }}>{fmt(c.profit)} ₸</span>
       </div>
+    </div>
+  );
+}
+
+// ── Автоматический дашборд WB ─────────────────────────────────────────────────
+function AutoDashboard({ user }) {
+  const [period, setPeriod] = useState('week');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const applyPeriod = useCallback((k) => {
+    const to = new Date();
+    const from = new Date();
+    if (k === 'today') {
+      // сегодня (скорее всего данных ещё нет, но удобно видеть)
+    } else if (k === 'yesterday') {
+      from.setDate(from.getDate() - 1);
+      to.setDate(to.getDate() - 1);
+    } else if (k === 'week') {
+      from.setDate(from.getDate() - 6);
+      to.setDate(to.getDate() - 1);
+    } else if (k === 'month') {
+      from.setDate(from.getDate() - 29);
+      to.setDate(to.getDate() - 1);
+    }
+    setPeriod(k);
+    setDateFrom(from.toISOString().split('T')[0]);
+    setDateTo(to.toISOString().split('T')[0]);
+  }, []);
+
+  const load = useCallback(async () => {
+    if (!dateFrom || !dateTo) return;
+    setLoading(true);
+    setError('');
+    try {
+      const d = await api.getDashboard(dateFrom, dateTo, user?.id);
+      setData(d);
+      // Auto-correct filter dates to match actual data range
+      if (d?.period?.actualFrom && d?.period?.actualTo) {
+        if (d.period.actualFrom !== dateFrom) setDateFrom(d.period.actualFrom);
+        if (d.period.actualTo !== dateTo) setDateTo(d.period.actualTo);
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [dateFrom, dateTo, user?.id]);
+
+  useEffect(() => { applyPeriod('week'); }, [applyPeriod]);
+  useEffect(() => { load(); }, [load]);
+
+  const totals = data?.totals;
+
+  return (
+    <div className="fade-in">
+      <div className="card" style={{ padding: '12px 16px', marginBottom: 16, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="pills">
+          {[
+            { k: 'week', l: 'Неделя' },
+            { k: 'month', l: 'Месяц' },
+          ].map(p => (
+            <button key={p.k} className={`pill ${period === p.k ? 'active' : ''}`}
+              onClick={() => applyPeriod(p.k)}>{p.l}</button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, borderLeft: '1px solid var(--border)', paddingLeft: 10 }}>
+          <span style={{ fontSize: 11, color: 'var(--txt3)' }}>От</span>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            className="form-input" style={{ width: 140, fontSize: 12 }} />
+          <span style={{ fontSize: 11, color: 'var(--txt3)' }}>До</span>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            className="form-input" style={{ width: 140, fontSize: 12 }} />
+          <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={load} disabled={loading}>
+            {loading ? 'Загрузка...' : 'Обновить'}
+          </button>
+        </div>
+        {data?.lastImportAt && (
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--txt3)' }}>
+            Последний импорт: {new Date(data.lastImportAt).toLocaleString('ru')}
+          </span>
+        )}
+        {data?.period?.actualFrom && (() => {
+          const fmt = s => s ? s.slice(8,10) + '.' + s.slice(5,7) + '.' + s.slice(0,4) : '';
+          return <span style={{ marginLeft: 12, fontSize: 11, color: 'var(--green-txt)', background: 'var(--green-bg)', padding: '2px 8px', borderRadius: 4, fontWeight: 500 }}>
+            Данные: {fmt(data.period.actualFrom)} — {fmt(data.period.actualTo)}
+          </span>;
+        })()}
+      </div>
+
+      {error && <div className="err-msg" style={{ marginBottom: 16 }}>{error}</div>}
+
+      {totals && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
+            <KpiCard label="Выручка" value={<AnimatedKpi value={totals.rev} format="money" color="var(--blue-txt)" />} />
+            <KpiCard label="Расходы" value={<AnimatedKpi value={totals.expenses} format="money" color="var(--red-txt)" />} />
+            <KpiCard label="Прибыль" value={<AnimatedKpi value={totals.profit} format="money" color={kpiColor('profit', totals.profit)} />} />
+            <KpiCard label="Маржа" value={<AnimatedKpi value={totals.margin} format="pct" color={kpiColor('margin', totals.margin)} />} />
+            <KpiCard label="ДРР" value={<AnimatedKpi value={totals.drr} format="pct" color={kpiColor('drr', totals.drr)} />} />
+            <KpiCard label="Удержания" value={<AnimatedKpi value={totals.deduction || 0} format="money" color="var(--yellow-txt)" />} />
+          </div>
+
+          {data.byCab?.length > 0 && (
+            <div className="card" style={{ padding: '16px 20px', marginBottom: 16 }}>
+              <div className="section-title" style={{ marginBottom: 12 }}>По кабинетам</div>
+              <div style={{ display: 'grid', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 0.9fr 0.9fr 0.9fr 0.7fr 0.5fr 0.9fr', gap: 8, fontSize: 10, color: 'var(--txt3)', textTransform: 'uppercase', letterSpacing: '0.05em', paddingBottom: 6, borderBottom: '1px solid var(--border)' }}>
+                  <span>Кабинет</span>
+                  <span style={{ textAlign: 'right' }}>Выручка</span>
+                  <span style={{ textAlign: 'right' }}>Расходы</span>
+                  <span style={{ textAlign: 'right' }}>Прибыль</span>
+                  <span style={{ textAlign: 'right' }}>Маржа</span>
+                  <span style={{ textAlign: 'right' }}>ДРР</span>
+                  <span style={{ textAlign: 'right' }}>Удерж.</span>
+                </div>
+                {data.byCab.map(c => (
+                  <div key={c.cab_id} style={{ display: 'grid', gridTemplateColumns: '1fr 0.9fr 0.9fr 0.9fr 0.7fr 0.5fr 0.9fr', gap: 8, fontSize: 13, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+                    <span>{c.cab_name}</span>
+                    <span style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(c.rev)} ₸</span>
+                    <span style={{ textAlign: 'right', color: 'var(--red-txt)' }}>{fmt(c.expenses)} ₸</span>
+                    <span style={{ textAlign: 'right', fontWeight: 600, color: kpiColor('profit', c.profit) }}>{fmt(c.profit)} ₸</span>
+                    <span style={{ textAlign: 'right', color: kpiColor('margin', c.margin) }}>{fmtP(c.margin)}%</span>
+                    <span style={{ textAlign: 'right', color: kpiColor('drr', c.drr) }}>{fmtP(c.drr)}%</span>
+                    <span style={{ textAlign: 'right', color: 'var(--yellow-txt)' }}>{fmt(c.deduction || 0)} ₸</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {data.byDay?.length > 0 && (
+            <div className="card" style={{ padding: '16px 20px' }}>
+              <div className="section-title" style={{ marginBottom: 12 }}>По дням</div>
+              <div style={{ display: 'grid', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 8, fontSize: 10, color: 'var(--txt3)', textTransform: 'uppercase', letterSpacing: '0.05em', paddingBottom: 6, borderBottom: '1px solid var(--border)' }}>
+                  <span>Дата</span>
+                  <span style={{ textAlign: 'right' }}>Выручка</span>
+                  <span style={{ textAlign: 'right' }}>Расходы</span>
+                  <span style={{ textAlign: 'right' }}>Прибыль</span>
+                  <span style={{ textAlign: 'right' }}>ДРР</span>
+                </div>
+                {data.byDay.map(d => (
+                  <div key={d.date} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 8, fontSize: 13, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+                    <span>{new Date(d.date).toLocaleDateString('ru')}</span>
+                    <span style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(d.rev)} ₸</span>
+                    <span style={{ textAlign: 'right', color: 'var(--red-txt)' }}>{fmt(d.expenses)} ₸</span>
+                    <span style={{ textAlign: 'right', fontWeight: 600, color: kpiColor('profit', d.profit) }}>{fmt(d.profit)} ₸</span>
+                    <span style={{ textAlign: 'right', color: kpiColor('drr', d.drr) }}>{fmtP(d.drr)}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {!totals && !loading && !error && (
+        <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--txt3)' }}>
+          Нет данных за выбранный период. Убедитесь, что импорт WB запущен и токены кабинетов заданы.
+        </div>
+      )}
     </div>
   );
 }
@@ -373,15 +563,17 @@ function TopEmployees({ history, users }) {
       const map = {};
       h.forEach(r => {
         const k = r.user_login || '—';
-        if (!map[k]) map[k] = { profit: 0, rev: 0 };
+        if (!map[k]) map[k] = { profit: 0, rev: 0, ret: 0 };
         map[k].profit += parseFloat(r.profit) || 0;
         map[k].rev    += parseFloat(r.rev)    || 0;
+        map[k].ret    += parseFloat(r.ret)    || 0;
       });
       return Object.entries(map)
         .map(([login, m]) => {
           const u = users.find(u => u.login === login);
+          const netRev = m.rev - m.ret;
           return { login, name: u?.name || login, ...m,
-            margin: m.rev > 0 ? m.profit / m.rev * 100 : 0 };
+            margin: netRev > 0 ? m.profit / netRev * 100 : 0 };
         })
         .sort((a, b) => b.profit - a.profit)
         .slice(0, 3);
@@ -502,24 +694,26 @@ function SalaryInput({ userId, current, setUsers }) {
   );
 }
 
-function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCabs, userGoals, setUserGoals, history }) {
+function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCabs, userGoals, setUserGoals, history, coeff }) {
   const [tab,        setTab]        = useState('products');
   const [editProd,   setEditProd]   = useState(null);
   const [showNew,    setShowNew]    = useState(false);
   const [delProdId,  setDelProdId]  = useState(null);
   const [newCab,     setNewCab]     = useState('');
-  const [newUser,    setNewUser]    = useState({ login: '', password: '', name: '' });
+  const [newUser,    setNewUser]    = useState({ login: '', password: '', name: '', pattern: '' });
   const [addingUser, setAddingUser] = useState(false);
   const [editCabsId, setEditCabsId] = useState(null); // userId для редактирования кабинетов
   const [err,        setErr]        = useState('');
 
+
+
   const saveProd = async p => {
-    const updated = await api.updateProduct(p.id, { name: p.name, cost: +p.cost, comm: +p.comm, w: +p.w, d: +p.d, h: +p.h });
+    const updated = await api.updateProduct(p.id, { name: p.name, article: p.article, cost: +p.cost, comm: +p.comm, w: +p.w, d: +p.d, h: +p.h });
     setCatalog(c => c.map(x => x.id === p.id ? updated : x));
     setEditProd(null);
   };
   const addProd = async p => {
-    const created = await api.addProduct({ name: p.name, cost: +p.cost, comm: +p.comm, w: +p.w, d: +p.d, h: +p.h });
+    const created = await api.addProduct({ name: p.name, article: p.article, cost: +p.cost, comm: +p.comm, w: +p.w, d: +p.d, h: +p.h });
     setCatalog(c => [...c, created]);
     setShowNew(false);
   };
@@ -528,33 +722,191 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
     setCatalog(c => c.filter(x => x.id !== id));
     setDelProdId(null);
   };
+  const syncProductsFromWb = async () => {
+    if (!syncProdCabId) return;
+    setSyncProdLoading(true);
+    try {
+      const res = await api.syncProducts(syncProdCabId);
+      alert(`Синхронизация завершена: ${res.products} товаров, добавлено ${res.inserted}, обновлено ${res.updated}`);
+      const cat = await api.getCatalog();
+      setCatalog(cat);
+    } catch (e) { setErr(e.message); }
+    finally { setSyncProdLoading(false); }
+  };
+  const importCommissionFromExcel = async () => {
+    if (!commFile) return;
+    setCommImporting(true);
+    try {
+      const { rates, count } = await api.importCommission(commFile);
+      if (!count) throw new Error('Не удалось распознать комиссии в файле');
+      const apply = await api.applyCommission(rates);
+      alert(`Импорт комиссий: распознано ${count} предметов, обновлено ${apply.updated} товаров`);
+      const cat = await api.getCatalog();
+      setCatalog(cat);
+      setCommFile(null);
+    } catch (e) { setErr(e.message); }
+    finally { setCommImporting(false); }
+  };
+  const saveProdCost = async (p, cost) => {
+    try {
+      const updated = await api.updateProduct(p.id, {
+        name: p.name, article: p.article, cost: +cost, comm: p.comm,
+        w: p.w, d: p.d, h: p.h
+      });
+      setCatalog(c => c.map(x => x.id === p.id ? updated : x));
+    } catch (e) { setErr(e.message); }
+  };
   const [newCabBuyout, setNewCabBuyout] = useState(88);
-  const [editCab, setEditCab] = useState(null); // {id, name, buyout}
+  const [newCabType, setNewCabType] = useState('regular');
+  const [editCab, setEditCab] = useState(null); // {id, name, buyout, cab_type, wb_token}
+  const [buyoutDays, setBuyoutDays] = useState(30);
+  const [deductionPct, setDeductionPct] = useState(7.66);
+  const [editDeductionPct, setEditDeductionPct] = useState('7.66');
+  const [syncingId, setSyncingId] = useState(null);
+  const [importDates, setImportDates] = useState({ dateFrom: '', dateTo: '' });
+  const [importingId, setImportingId] = useState(null);
+  const [seedingId, setSeedingId] = useState(null);
+  const [seedAdsId, setSeedAdsId] = useState(null);
+  const [cabAdverts, setCabAdverts] = useState([]);
+  const [advertsLoading, setAdvertsLoading] = useState(false);
+
+  // Синхронизация товаров и комиссий из WB
+  const [syncProdCabId, setSyncProdCabId] = useState('');
+  const [syncProdLoading, setSyncProdLoading] = useState(false);
+  const [commFile, setCommFile] = useState(null);
+  const [commImporting, setCommImporting] = useState(false);
+
+  // Статус фонового импорта WB
+  const [schedulerStatus, setSchedulerStatus] = useState(null);
+  const [importStatus, setImportStatus] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      try {
+        const [s, is] = await Promise.all([
+          api.getSchedulerStatus(),
+          api.getImportStatus(),
+        ]);
+        if (mounted) { setSchedulerStatus(s); setImportStatus(is); }
+      } catch (e) { console.warn('status error:', e.message); }
+    };
+    load();
+    const id = setInterval(load, 60_000);
+    return () => { mounted = false; clearInterval(id); };
+  }, []);
+
+
+  // Калькулятор остатка после удержаний WB (не используется — данные из API)
 
   const addCab = async () => {
     if (!newCab.trim()) return;
     try {
-      const c = await api.addCab(newCab.trim(), newCabBuyout);
+      const c = await api.addCab(newCab.trim(), newCabBuyout, newCabType);
       setCabs(x => [...x, c]);
-      setNewCab(''); setNewCabBuyout(88);
+      setNewCab(''); setNewCabBuyout(88); setNewCabType('regular');
     } catch (e) { setErr(e.message); }
   };
   const saveCab = async () => {
     if (!editCab) return;
     try {
-      const c = await api.updateCab(editCab.id, { name: editCab.name, buyout: +editCab.buyout });
+      const c = await api.updateCab(editCab.id, {
+        name: editCab.name,
+        buyout: +editCab.buyout,
+        cab_type: editCab.cab_type || 'regular',
+        wb_token: editCab.wb_token?.trim() || null,
+      });
       setCabs(x => x.map(cab => cab.id === c.id ? c : cab));
       setEditCab(null);
     } catch (e) { setErr(e.message); }
   };
   const delCab = async id => { await api.deleteCab(id); setCabs(x => x.filter(c => c.id !== id)); };
+  const syncCab = async id => {
+    setSyncingId(id);
+    try {
+      const c = await api.syncCab(id);
+      setCabs(x => x.map(cab => cab.id === c.id ? c : cab));
+    } catch (e) { setErr(e.message); }
+    finally { setSyncingId(null); }
+  };
+  const importWbCab = async id => {
+    setImportingId(id);
+    try {
+      const { dateFrom, dateTo } = importDates;
+      const result = await api.importWb(id, dateFrom, dateTo);
+      if (result.status === 'blocked' || result.status === 'failed') {
+        alert(`Импорт заблокирован. Прежние данные сохранены.\n${result.issues?.[0]?.message || 'Проверка не пройдена'}`);
+      } else {
+        alert(`Импорт завершён: ${result.imported || 0} дней. Статус: ${IMPORT_STATUS[result.status]?.label || result.status}`);
+      }
+      try { const is = await api.getImportStatus(); setImportStatus(is); } catch (e) { console.warn('import status refresh error:', e.message); }
+    } catch (e) { setErr(e.message); }
+    finally { setImportingId(null); }
+  };
+  const seedDemoCab = async id => {
+    setSeedingId(id);
+    try {
+      const result = await api.seedDemoWb(id, 7);
+      alert(`Демо-данные добавлены: ${result.imported || 0} дней`);
+    } catch (e) { setErr(e.message); }
+    finally { setSeedingId(null); }
+  };
+  const seedDemoAdsCab = async id => {
+    setSeedAdsId(id);
+    try {
+      const result = await api.seedDemoAdsWb(id, 7);
+      alert(`Демо-кампании добавлены: ${result.imported || 0} строк`);
+      await loadCabAdverts(id);
+    } catch (e) { setErr(e.message); }
+    finally { setSeedAdsId(null); }
+  };
+
+  const loadCabAdverts = async id => {
+    setAdvertsLoading(true);
+    try {
+      const { dateFrom, dateTo } = importDates;
+      const rows = await api.getWbAdverts(id, dateFrom, dateTo);
+      setCabAdverts(rows || []);
+    } catch (e) { setErr(e.message); }
+    finally { setAdvertsLoading(false); }
+  };
+
+  useEffect(() => {
+    api.getSettings().then(s => {
+      const d = parseInt(s.buyout_days, 10);
+      if (!isNaN(d) && d > 0) setBuyoutDays(d);
+      const pct = parseFloat(s.deduction_pct);
+      if (!isNaN(pct) && pct >= 0) { setDeductionPct(pct); setEditDeductionPct(String(pct)); }
+    }).catch(() => {});
+  }, []);
+
+
+  const saveBuyoutDays = async days => {
+    const d = parseInt(days, 10);
+    if (isNaN(d) || d < 1) return;
+    setBuyoutDays(d);
+    try { await api.setSettings({ buyout_days: d }); } catch (e) { setErr(e.message); }
+  };
+  const saveDeductionPct = async val => {
+    const n = parseFloat(val);
+    if (isNaN(n) || n < 0 || n > 100) return;
+    setDeductionPct(n);
+    setEditDeductionPct(String(n));
+    try { await api.setSettings({ deduction_pct: n }); } catch (e) { setErr(e.message); }
+  };
   const addUser = async () => {
     if (!newUser.login.trim() || !newUser.password.trim()) return;
     try {
-      const u = await api.register(newUser.login.trim(), newUser.password, newUser.name);
+      const u = await api.register(newUser.login.trim(), newUser.password, newUser.name, newUser.pattern.trim() || null);
       setUsers(x => [...x, u]);
-      setNewUser({ login: '', password: '', name: '' });
+      setNewUser({ login: '', password: '', name: '', pattern: '' });
       setAddingUser(false);
+    } catch (e) { setErr(e.message); }
+  };
+  const saveUserPattern = async (u, pattern) => {
+    try {
+      const updated = await api.updateUser(u.id, { name: u.name, pattern: pattern.trim() || null });
+      setUsers(us => us.map(x => x.id === u.id ? { ...x, name: updated.name, pattern: updated.pattern } : x));
     } catch (e) { setErr(e.message); }
   };
   const delUser = async id => {
@@ -587,6 +939,22 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
             </div>
             <button className="btn btn-primary" onClick={() => setShowNew(true)}>+ Добавить товар</button>
           </div>
+
+          {/* Синхронизация с WB и импорт комиссий */}
+          <div className="card" style={{ background: 'var(--bg2)', marginBottom: 16, padding: 14 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
+              <div className="field" style={{ minWidth: 240 }}>
+                <label className="form-label">Excel комиссии WB <span style={{ fontSize: 11, color: 'var(--txt3)' }}>(колонка «Маркетплейс (FBS), %»)</span></label>
+                <input type="file" accept=".xlsx,.xls" className="form-input"
+                  onChange={e => setCommFile(e.target.files?.[0] || null)} />
+              </div>
+              <button className="btn btn-primary" disabled={!commFile || commImporting}
+                onClick={importCommissionFromExcel}>
+                {commImporting ? 'Импорт…' : '↑ Загрузить комиссии'}
+              </button>
+            </div>
+          </div>
+
           {delProdId && (
             <div className="confirm-bar">
               <span style={{ color: 'var(--red-txt)', flex: 1 }}>Удалить «{catalog.find(p => p.id === delProdId)?.name}»?</span>
@@ -598,8 +966,10 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
             <table>
               <thead><tr>
                 <th style={{ textAlign: 'left' }}>Название</th>
+                <th style={{ textAlign: 'left' }}>Артикул WB</th>
+                <th style={{ textAlign: 'left' }}>Предмет</th>
                 <th>Себес. ₸</th><th>Комиссия</th>
-                <th>Ш</th><th>Г</th><th>В</th><th>Объём л</th><th></th>
+                <th>Ш</th><th>Г</th><th>В</th><th>Объём л</th><th>Источник</th><th></th>
               </tr></thead>
               <tbody>
                 {catalog.map(p => {
@@ -607,12 +977,22 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
                   return (
                     <tr key={p.id}>
                       <td style={{ fontWeight: 500 }}>{p.name}</td>
-                      <td style={{ textAlign: 'right' }}>{(+p.cost).toLocaleString('ru')}</td>
-                      <td style={{ textAlign: 'right' }}><span className="badge badge-blue">{p.comm}%</span></td>
+                      <td style={{ color: 'var(--txt2)', fontSize: 12 }}>{p.article || '—'}</td>
+                      <td style={{ color: 'var(--txt2)', fontSize: 12 }}>{p.subject || '—'}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <input type="number" className="form-input" style={{ width: 100, textAlign: 'right' }}
+                          value={p.cost ?? ''}
+                          onChange={e => setCatalog(c => c.map(x => x.id === p.id ? { ...x, cost: e.target.value } : x))}
+                          onBlur={e => saveProdCost(p, e.target.value)} />
+                      </td>
+                      <td style={{ textAlign: 'right' }}><span className="badge badge-blue">{parseFloat(p.comm).toFixed(2)}%</span></td>
                       <td style={{ textAlign: 'center', color: 'var(--txt2)' }}>{p.w || '—'}</td>
                       <td style={{ textAlign: 'center', color: 'var(--txt2)' }}>{p.d || '—'}</td>
                       <td style={{ textAlign: 'center', color: 'var(--txt2)' }}>{p.h || '—'}</td>
                       <td style={{ textAlign: 'right', color: 'var(--txt3)' }}>{vol}</td>
+                      <td style={{ textAlign: 'center' }}>
+                        {p.source === 'wb' ? <span className="badge badge-green">WB</span> : <span className="badge">ручная</span>}
+                      </td>
                       <td style={{ textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                           <button className="btn" style={{ padding: '4px 12px' }} onClick={() => setEditProd({ ...p })}>Изменить</button>
@@ -634,6 +1014,77 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
             <div><div className="section-title">Кабинеты продавцов</div><div className="section-sub">{cabs.length} кабинетов</div></div>
           </div>
 
+          {/* Статус фонового импорта */}
+          {schedulerStatus && (
+            <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--txt2)' }}>🤖 Фоновый импорт WB</div>
+                  <div style={{ fontSize: 11, color: 'var(--txt3)', marginTop: 2 }}>
+                    {schedulerStatus.running
+                      ? 'Выполняется прямо сейчас…'
+                      : schedulerStatus.settings?.scheduler_last_run
+                        ? `Последний запуск: ${new Date(schedulerStatus.settings.scheduler_last_run).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`
+                        : 'Ещё не запускался'}
+                    {schedulerStatus.settings?.scheduler_last_deep_run && (
+                      <span style={{ marginLeft: 8 }}>· глубокая догонка: {new Date(schedulerStatus.settings.scheduler_last_deep_run).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Статус импорта по кабинетам */}
+          {importStatus && importStatus.cabs && importStatus.cabs.length > 0 && (
+            <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--txt2)', marginBottom: 10 }}>📋 Статус импорта</div>
+              <div style={{ display: 'grid', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1.5fr 1fr 1fr 1fr 1fr', gap: 6, fontSize: 10, color: 'var(--txt3)', textTransform: 'uppercase', letterSpacing: '0.04em', paddingBottom: 4, borderBottom: '1px solid var(--border)' }}>
+                  <span>Кабинет</span>
+                  <span>Статус</span>
+                  <span>Период</span>
+                  <span style={{ textAlign: 'center' }}>Загруж.</span>
+                  <span style={{ textAlign: 'center' }}>Принято</span>
+                  <span style={{ textAlign: 'center' }}>Отклон.</span>
+                  <span style={{ textAlign: 'center' }}>Попыток</span>
+                </div>
+                {importStatus.cabs.map(ci => {
+                  const is = IMPORT_STATUS[ci.status] || { label: ci.status || '—', className: '' };
+                  const blocked = ci.status === 'blocked' || ci.status === 'failed';
+                  return (
+                    <div key={ci.cab_id} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1.5fr 1fr 1fr 1fr 1fr', gap: 6, fontSize: 12, padding: '6px 0', alignItems: 'center', borderBottom: '1px solid var(--border)' }}>
+                      <span style={{ fontWeight: 500 }}>{ci.cab_name || `#${ci.cab_id}`}</span>
+                      <span><span className={`badge ${is.className}`} style={{ fontSize: 10 }}>{is.label}</span></span>
+                      <span style={{ fontSize: 10, color: 'var(--txt3)' }}>
+                        {ci.date_from || ci.date_to
+                          ? `${ci.date_from || '?'} – ${ci.date_to || '?'}`
+                          : '—'}
+                        {ci.date_from_actual && ci.date_from_actual !== ci.date_from && (
+                          <span style={{ display: 'block', fontSize: 9, color: 'var(--yellow-txt)' }}>факт: {ci.date_from_actual} – {ci.date_to_actual || '?'}</span>
+                        )}
+                      </span>
+                      <span style={{ textAlign: 'center', color: 'var(--blue-txt)', fontWeight: 600 }}>{ci.fetched ?? '—'}</span>
+                      <span style={{ textAlign: 'center', color: 'var(--green-txt)' }}>{ci.accepted ?? '—'}</span>
+                      <span style={{ textAlign: 'center', color: blocked ? 'var(--red-txt)' : 'var(--txt3)' }}>{ci.rejected ?? '—'}</span>
+                      <span style={{ textAlign: 'center', color: blocked ? 'var(--red-txt)' : 'var(--txt3)', fontWeight: ci.attempts > 1 ? 600 : 400 }}>{ci.attempts ?? 1}</span>
+                      {blocked && ci.issue_message && (
+                        <div style={{ gridColumn: '1 / -1', fontSize: 10, color: 'var(--red-txt)', padding: '4px 8px', background: 'var(--red-bg)', borderRadius: 6, marginTop: 2 }}>
+                          {ci.issue_message}
+                        </div>
+                      )}
+                      {blocked && (
+                        <div style={{ gridColumn: '1 / -1', fontSize: 10, color: 'var(--yellow-txt)', padding: '2px 8px', marginTop: 1 }}>
+                          Прежние данные сохранены
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Модалка редактирования кабинета */}
           {editCab && (
             <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setEditCab(null)}>
@@ -647,12 +1098,25 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
                   <input className="form-input" value={editCab.name}
                     onChange={e => setEditCab(x => ({ ...x, name: e.target.value }))} />
                 </div>
-                <div className="field" style={{ marginBottom: 20 }}>
-                  <label className="form-label">Процент выкупа, %</label>
-                  <input type="number" className="form-input" value={editCab.buyout} min="0" max="100"
-                    onChange={e => setEditCab(x => ({ ...x, buyout: e.target.value }))} />
+                <div className="field" style={{ marginBottom: 14 }}>
+                  <label className="form-label">Тип кабинета</label>
+                  <select className="form-input" value={editCab.cab_type || 'regular'}
+                    onChange={e => setEditCab(x => ({ ...x, cab_type: e.target.value }))}>
+                    <option value="regular">Обычный</option>
+                    <option value="iu">ИУ</option>
+                  </select>
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div className="field" style={{ marginBottom: 14 }}>
+                  <label className="form-label">Процент выкупа, % <span style={{ fontSize: 11, color: 'var(--txt3)' }}>(из WB API)</span></label>
+                  <input type="number" className="form-input" value={editCab.buyout ?? 88} min="0" max="100" disabled
+                    style={{ background: 'var(--bg2)', color: 'var(--txt2)' }} />
+                </div>
+                <div className="field" style={{ marginBottom: 20 }}>
+                  <label className="form-label">WB API токен <span style={{ fontSize: 11, color: 'var(--txt3)' }}>(хранится в БД)</span></label>
+                  <input type="password" className="form-input" value={editCab.wb_token || ''} placeholder="Вставьте JWT-токен из WB Partners"
+                    onChange={e => setEditCab(x => ({ ...x, wb_token: e.target.value }))} />
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                   <button className="btn btn-primary btn-lg" style={{ flex: 1 }} onClick={saveCab}>Сохранить</button>
                   <button className="btn btn-lg" onClick={() => setEditCab(null)}>Отмена</button>
                 </div>
@@ -661,9 +1125,13 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
           )}
 
           {/* Добавить новый */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
             <input className="form-input" value={newCab} onChange={e => setNewCab(e.target.value)}
-              placeholder="Название кабинета" onKeyDown={e => e.key === 'Enter' && addCab()} style={{ flex: 1 }} />
+              placeholder="Название кабинета" onKeyDown={e => e.key === 'Enter' && addCab()} style={{ flex: 1, minWidth: 160 }} />
+            <select className="form-input" value={newCabType} onChange={e => setNewCabType(e.target.value)} style={{ width: 120 }}>
+              <option value="regular">Обычный</option>
+              <option value="iu">ИУ</option>
+            </select>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
               <span style={{ fontSize: 12, color: 'var(--txt2)', whiteSpace: 'nowrap' }}>Выкуп %</span>
               <input type="number" className="form-input" value={newCabBuyout} min="0" max="100"
@@ -672,11 +1140,34 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
             <button className="btn btn-primary" style={{ whiteSpace: 'nowrap' }} onClick={addCab}>+ Добавить</button>
           </div>
 
+          {/* Настройка периода buyout */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, padding: '10px 12px',
+            background: 'rgba(255,255,255,0.04)', borderRadius: 10, border: '1px solid var(--border)' }}>
+            <span style={{ fontSize: 12, color: 'var(--txt2)' }}>Период для расчёта выкупа из WB:</span>
+            <input type="number" className="form-input" value={buyoutDays} min="1" max="365"
+              onChange={e => saveBuyoutDays(e.target.value)} style={{ width: 70 }} />
+            <span style={{ fontSize: 12, color: 'var(--txt3)' }}>дней</span>
+          </div>
+
+          {/* Настройка процента удержаний WB */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, padding: '10px 12px',
+            background: 'rgba(255,255,255,0.04)', borderRadius: 10, border: '1px solid var(--border)' }}>
+            <span style={{ fontSize: 12, color: 'var(--txt2)' }}>Удержания WB (% от чистой выручки):</span>
+            <input type="number" className="form-input" value={editDeductionPct} min="0" max="100" step="0.1"
+              onChange={e => setEditDeductionPct(e.target.value)}
+              onBlur={e => saveDeductionPct(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && saveDeductionPct(e.target.value)}
+              style={{ width: 70 }} />
+            <span style={{ fontSize: 12, color: 'var(--txt3)' }}>%</span>
+          </div>
+
           {/* Список */}
           <table>
             <thead><tr>
               <th style={{ textAlign: 'left' }}>Кабинет</th>
+              <th style={{ textAlign: 'center' }}>Тип</th>
               <th style={{ textAlign: 'center' }}>Выкуп %</th>
+              <th style={{ textAlign: 'center' }}>Посл. синхр.</th>
               <th></th>
             </tr></thead>
             <tbody>
@@ -684,15 +1175,30 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
                 <tr key={c.id}>
                   <td style={{ fontWeight: 500 }}>{c.name}</td>
                   <td style={{ textAlign: 'center' }}>
+                    <span className="badge badge-blue">{c.cab_type === 'iu' ? 'ИУ' : 'Обычный'}</span>
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
                     <span className="badge" style={{
                       background: +c.buyout >= 85 ? 'var(--green-bg)' : +c.buyout >= 70 ? 'var(--yellow-bg)' : 'var(--red-bg)',
                       color:      +c.buyout >= 85 ? 'var(--green-txt)' : +c.buyout >= 70 ? 'var(--yellow-txt)' : 'var(--red-txt)',
                     }}>{c.buyout ?? 88}%</span>
                   </td>
+                  <td style={{ textAlign: 'center', fontSize: 11, color: 'var(--txt3)' }}>
+                    {c.last_synced_at ? new Date(c.last_synced_at).toLocaleString('ru', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—'}
+                  </td>
                   <td style={{ textAlign: 'right' }}>
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                       <button className="btn" style={{ padding: '3px 12px', fontSize: 11 }}
-                        onClick={() => setEditCab({ id: c.id, name: c.name, buyout: c.buyout ?? 88 })}>
+                        onClick={async () => {
+                          try {
+                            const full = await api.getCab(c.id);
+                             setEditCab({
+                               id: full.id, name: full.name, buyout: full.buyout ?? 88,
+                               cab_type: full.cab_type || 'regular',
+                               wb_token: ''
+                             });
+                          } catch (e) { setErr(e.message); }
+                        }}>
                         Изменить
                       </button>
                       <button className="btn btn-danger" style={{ padding: '3px 12px', fontSize: 11 }}
@@ -714,8 +1220,8 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
           </div>
           {addingUser && (
             <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, marginBottom: 16 }}>
-              <div className="form-grid-3" style={{ marginBottom: 10 }}>
-                {[['Логин', 'login', 'login'], ['Пароль', 'password', 'пароль'], ['Имя', 'name', 'Иван']].map(([l, k, ph]) => (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 10 }}>
+                {[['Логин', 'login', 'login'], ['Пароль', 'password', 'пароль'], ['Имя', 'name', 'Иван'], ['Шаблон (regex)', 'pattern', 'ima']].map(([l, k, ph]) => (
                   <div key={k}>
                     <label className="form-label">{l}</label>
                     <input className="form-input" value={newUser[k]} placeholder={ph}
@@ -794,6 +1300,7 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
               <th>Роль</th>
               <th>Магазины</th>
               <th>% ЗП</th>
+              <th>Шаблон WB</th>
               <th style={{ textAlign: 'center' }}>🎯 План/мес ₸</th>
               <th></th>
             </tr></thead>
@@ -834,6 +1341,16 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
                     </td>
                     <td style={{ textAlign: 'center' }}>
                       <SalaryInput userId={u.id} current={u.salary_pct} setUsers={setUsers} />
+                    </td>
+                    <td style={{ textAlign: 'left' }}>
+                      <input
+                        className="form-input"
+                        style={{ width: '100%', minWidth: 120, fontSize: 12, fontFamily: 'monospace' }}
+                        value={u.pattern || ''}
+                        placeholder="ima"
+                        onChange={e => setUsers(us => us.map(x => x.id === u.id ? { ...x, pattern: e.target.value } : x))}
+                        onBlur={e => saveUserPattern(u, e.target.value)}
+                      />
                     </td>
                     <td style={{ textAlign: 'center', minWidth: 140 }}>
                       <GoalInput
@@ -920,6 +1437,7 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
           })()}
         </div>
       )}
+
     </div>
   );
 }
@@ -932,6 +1450,42 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal, u
   const [filterUser, setFilterUser] = useState('all');
   const [filterCab,  setFilterCab]  = useState('all');
   const [plansOpen,  setPlansOpen]  = useState(false);
+  const [advertMetrics, setAdvertMetrics] = useState(null);
+  const [advertLoading, setAdvertLoading] = useState(false);
+
+  // Эффективный диапазон дат для запроса метрик рекламы
+  const effectiveDateRange = useMemo(() => {
+    if (dateFrom || dateTo) return { dateFrom, dateTo };
+    const p = PERIODS.find(x => x.k === period);
+    if (!p || p.days === Infinity) return { dateFrom: '', dateTo: '' };
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - p.days);
+    return {
+      dateFrom: from.toISOString().split('T')[0],
+      dateTo: to.toISOString().split('T')[0],
+    };
+  }, [period, dateFrom, dateTo]);
+
+  // Загружаем метрики WB Promotion
+  useEffect(() => {
+    const load = async () => {
+      if (!effectiveDateRange.dateFrom || !effectiveDateRange.dateTo) return;
+      const cab = cabs.find(c => c.name === filterCab);
+      const cabId = filterCab === 'all' ? 'all' : (cab?.id || 'all');
+      setAdvertLoading(true);
+      try {
+        const data = await api.getWbAdvertMetrics(cabId, effectiveDateRange.dateFrom, effectiveDateRange.dateTo);
+        setAdvertMetrics(data);
+      } catch (e) {
+        console.error('advert metrics error:', e.message);
+        setAdvertMetrics(null);
+      } finally {
+        setAdvertLoading(false);
+      }
+    };
+    load();
+  }, [cabs, filterCab, effectiveDateRange.dateFrom, effectiveDateRange.dateTo]);
 
   const filtered = useMemo(() => {
     let h = history;
@@ -966,10 +1520,11 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal, u
     if (!arr.length) return null;
     const sum = f => arr.reduce((a, r) => a + (parseFloat(r[f]) || 0), 0);
     const rev = sum('rev'), profit = sum('profit'), ads = sum('ads'),
-          cost = sum('cost'), comm = sum('comm'), log_f = sum('log_f'), log_r = sum('log_r'), ret = sum('ret');
-    return { rev, profit, ads, cost, comm, log_f, log_r, ret,
-      margin: rev > 0 ? profit / rev * 100 : 0,
-      drr:    rev > 0 ? ads / rev * 100 : 0,
+          cost = sum('cost'), comm = sum('comm'), cab_comm = sum('cab_comm'), log_f = sum('log_f'), log_r = sum('log_r'), ret = sum('ret');
+    const netRev = rev - ret;
+    return { rev, profit, ads, cost, comm, cab_comm, log_f, log_r, ret,
+      margin: netRev > 0 ? profit / netRev * 100 : 0,
+      drr:    netRev > 0 ? ads / netRev * 100 : 0,
       days:   arr.length };
   };
 
@@ -985,16 +1540,17 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal, u
     const map = {};
     filtered.forEach(r => {
       const k = r.user_login || '—';
-      if (!map[k]) map[k] = { rev: 0, profit: 0, ads: 0, cost: 0, comm: 0, log_f: 0, log_r: 0, ret: 0, cnt: 0 };
+      if (!map[k]) map[k] = { rev: 0, profit: 0, ads: 0, cost: 0, comm: 0, cab_comm: 0, log_f: 0, log_r: 0, ret: 0, cnt: 0 };
       const m = map[k];
-      ['rev','profit','ads','cost','comm','log_f','log_r','ret'].forEach(f => m[f] += parseFloat(r[f]) || 0);
+      ['rev','profit','ads','cost','comm','cab_comm','log_f','log_r','ret'].forEach(f => m[f] += parseFloat(r[f]) || 0);
       m.cnt++;
     });
     return Object.entries(map).map(([login, m]) => {
       const u = users.find(u => u.login === login);
+      const netRev = m.rev - m.ret;
       return { ...m, login, name: u?.name || login,
-        margin: m.rev > 0 ? m.profit / m.rev * 100 : 0,
-        drr:    m.rev > 0 ? m.ads / m.rev * 100 : 0 };
+        margin: netRev > 0 ? m.profit / netRev * 100 : 0,
+        drr:    netRev > 0 ? m.ads / netRev * 100 : 0 };
     }).sort((a, b) => b.rev - a.rev);
   }, [filtered, users]);
 
@@ -1013,7 +1569,7 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal, u
   }, [filtered]);
 
   const userLogins = [...new Set(history.map(r => r.user_login).filter(Boolean))];
-  const totalExp = total ? total.cost + total.ads + total.comm + total.log_f + total.log_r + total.ret : 0;
+  const totalExp = total ? total.cost + total.ads + total.comm + total.cab_comm + total.log_f + total.log_r + total.ret : 0;
 
   return (
     <div className="fade-in">
@@ -1092,6 +1648,30 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal, u
           })}
         </div>
 
+        {/* Метрики WB Promotion */}
+        {advertMetrics && advertMetrics.campaigns > 0 && (
+          <div className="card" style={{ padding: '20px 24px', marginBottom: 16 }}>
+            <div className="section-title" style={{ marginBottom: 16 }}>📢 Метрики WB Promotion</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 16 }}>
+              {[
+                { l: 'Total order value', v: fmt(advertMetrics.orderValue) + ' ₸', col: 'var(--blue-txt)' },
+                { l: 'Expenses',          v: fmt(advertMetrics.expenses) + ' ₸',   col: 'var(--red-txt)' },
+                { l: 'Share of expenses', v: fmtP(advertMetrics.share) + '%',      col: 'var(--yellow-txt)' },
+                { l: 'ROAS',              v: '×' + fmt(advertMetrics.roas),        col: 'var(--green-txt)' },
+                { l: 'CTR',               v: fmtP(advertMetrics.ctr) + '%',        col: 'var(--txt2)' },
+              ].map(m => (
+                <div key={m.l} style={{ textAlign: 'center', padding: '12px 8px', borderRadius: 10, background: 'var(--bg2)' }}>
+                  <div style={{ fontSize: 11, color: 'var(--txt3)', marginBottom: 6 }}>{m.l}</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: m.col }}>{m.v}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 12, fontSize: 11, color: 'var(--txt3)', textAlign: 'center' }}>
+              Кампаний: {advertMetrics.campaigns} · Показов: {fmt(advertMetrics.views)} · Кликов: {fmt(advertMetrics.clicks)} · Заказов: {fmt(advertMetrics.orders)}
+            </div>
+          </div>
+        )}
+
         {/* Линейный график по дням */}
         {dailyData.length > 1 && (() => {
           const W = 620, H = 180, pad = { t: 16, r: 16, b: 32, l: 68 };
@@ -1166,12 +1746,12 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal, u
           <div className="card" style={{ padding: '20px 24px' }}>
             <div className="section-title" style={{ marginBottom: 16 }}>Структура расходов</div>
             {[
-              { l: 'Себестоимость',       v: total.cost,  col: 'var(--red-txt)' },
-              { l: 'Реклама',             v: total.ads,   col: 'var(--yellow-txt)' },
-              { l: 'Комиссия WB',         v: total.comm,  col: 'var(--red-txt)' },
-              { l: 'Логистика доставки',  v: total.log_f, col: 'var(--txt2)' },
-              { l: 'Логистика возвратов', v: total.log_r, col: 'var(--txt2)' },
-              { l: 'Потери на возвраты',  v: total.ret,   col: 'var(--red-txt)' },
+              { l: 'Себестоимость',       v: total.cost,     col: 'var(--red-txt)' },
+              { l: 'Реклама',             v: total.ads,      col: 'var(--yellow-txt)' },
+              { l: 'Комиссия WB',         v: total.comm,     col: 'var(--red-txt)' },
+              { l: 'Комиссия кабинета',   v: total.cab_comm, col: 'var(--red-txt)' },
+              { l: 'Логистика доставки',  v: total.log_f,    col: 'var(--txt2)' },
+              { l: 'Логистика возвратов', v: total.log_r,    col: 'var(--txt2)' },
             ].map(r => {
               const pct = totalExp > 0 ? r.v / totalExp * 100 : 0;
               return (
@@ -1231,7 +1811,7 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal, u
                     <td style={{ textAlign: 'center', color: 'var(--txt2)' }}>{u.cnt}</td>
                     <td style={{ textAlign: 'right', color: 'var(--blue-txt)', fontWeight: 600 }}>{fmt(u.rev)}</td>
                     <td style={{ textAlign: 'right', color: 'var(--red-txt)' }}>
-                      {fmt(u.cost + u.ads + u.comm + u.log_f + u.log_r + u.ret)}
+                      {fmt(u.cost + u.ads + u.comm + u.cab_comm + u.log_f + u.log_r + u.ret)}
                     </td>
                     <td style={{ textAlign: 'right', fontWeight: 700, color: kpiColor('profit', u.profit) }}>{fmt(u.profit)}</td>
                     <td style={{ textAlign: 'right', color: kpiColor('margin', u.margin) }}>{fmtP(u.margin)}%</td>
@@ -1318,7 +1898,7 @@ function CompanyDashboard({ history, users, cabs, revenueGoal, setRevenueGoal, u
 }
 
 // ── История ───────────────────────────────────────────────────────────────────
-function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDelete, onClear }) {
+function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, deductionPct, onDelete, onClear }) {
   const [period,      setPeriod]     = useState('month');
   const [dateFrom,    setDateFrom]   = useState('');
   const [dateTo,      setDateTo]     = useState('');
@@ -1328,10 +1908,10 @@ function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDel
   const [editRec,     setEditRec]    = useState(null);
 
   const exportCSV = (rows) => {
-    const cols = ['Дата','Кабинет','Сотрудник','Выручка','Реклама','Себест.','Комиссия','Лог.дост.','Лог.возвр.','Возвраты','Прибыль','Маржа%','ДРР%','Комментарий'];
+    const cols = ['Дата','Кабинет','Сотрудник','Выручка','Реклама','Себест.','Комиссия','Комм.каб.','Лог.дост.','Лог.возвр.','Возвраты','Прибыль','Маржа%','ДРР%','Комментарий'];
     const lines = [cols.join(';'), ...rows.map(r => [
       r.date?.split('T')[0], r.cabinet, r.user_login,
-      r.rev, r.ads, r.cost, r.comm, r.log_f, r.log_r, r.ret, r.profit,
+      r.rev, r.ads, r.cost, r.comm, r.cab_comm, r.log_f, r.log_r, r.ret, r.profit,
       fmtP(parseFloat(r.margin)), fmtP(parseFloat(r.drr)), r.comment||'',
     ].join(';'))];
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
@@ -1341,10 +1921,10 @@ function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDel
 
   const exportXLSX = (rows) => {
     const data = [
-      ['Дата','Кабинет','Сотрудник','Выручка','Реклама','Себест.','Комиссия','Лог.дост.','Лог.возвр.','Возвраты','Прибыль','Маржа%','ДРР%','Комментарий'],
+      ['Дата','Кабинет','Сотрудник','Выручка','Реклама','Себест.','Комиссия','Комм.каб.','Лог.дост.','Лог.возвр.','Возвраты','Прибыль','Маржа%','ДРР%','Комментарий'],
       ...rows.map(r => [
         r.date?.split('T')[0], r.cabinet, r.user_login,
-        +r.rev||0, +r.ads||0, +r.cost||0, +r.comm||0, +r.log_f||0, +r.log_r||0, +r.ret||0, +r.profit||0,
+        +r.rev||0, +r.ads||0, +r.cost||0, +r.comm||0, +r.cab_comm||0, +r.log_f||0, +r.log_r||0, +r.ret||0, +r.profit||0,
         parseFloat(r.margin)||0, parseFloat(r.drr)||0, r.comment||'',
       ])
     ];
@@ -1368,8 +1948,8 @@ function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDel
     if (!filtered.length) return null;
     const sum = f => filtered.reduce((a, r) => a + (parseFloat(r[f]) || 0), 0);
     const rev = sum('rev'), profit = sum('profit'), ads = sum('ads'),
-          cost = sum('cost'), comm = sum('comm'), log_f = sum('log_f'), log_r = sum('log_r'), ret = sum('ret');
-    return { rev, profit, ads, cost, comm, log_f, log_r, ret,
+          cost = sum('cost'), comm = sum('comm'), cab_comm = sum('cab_comm'), log_f = sum('log_f'), log_r = sum('log_r'), ret = sum('ret');
+    return { rev, profit, ads, cost, comm, cab_comm, log_f, log_r, ret,
       margin: rev > 0 ? profit / rev * 100 : 0,
       drr: rev > 0 ? ads / rev * 100 : 0, count: filtered.length };
   }, [filtered]);
@@ -1396,6 +1976,7 @@ function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDel
               { l: 'Реклама ₸', k: 'ads', type: 'number' },
               { l: 'Себестоимость ₸', k: 'cost', type: 'number' },
               { l: 'Комиссия ₸', k: 'comm', type: 'number' },
+              { l: 'Комиссия кабинета ₸', k: 'cab_comm', type: 'number' },
               { l: 'Логистика доставки ₸', k: 'log_f', type: 'number' },
               { l: 'Логистика возвратов ₸', k: 'log_r', type: 'number' },
               { l: 'Потери на возвраты ₸', k: 'ret', type: 'number' },
@@ -1410,8 +1991,10 @@ function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDel
             <div style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)' }}>
               {(() => {
                 const rev = +editRec.rev || 0, ads = +editRec.ads || 0, cost = +editRec.cost || 0;
-                const comm = +editRec.comm || 0, logF = +editRec.log_f || 0, logR = +editRec.log_r || 0, ret = +editRec.ret || 0;
-                const profit = rev - ads - cost - comm - logF - logR - ret;
+                const comm = +editRec.comm || 0, cabComm = +editRec.cab_comm || 0, logF = +editRec.log_f || 0, logR = +editRec.log_r || 0, ret = +editRec.ret || 0;
+                const netRev = rev - ret;
+                const deduction = netRev * deductionPct / 100;
+                const profit = rev - ads - cost - comm - cabComm - logF - logR - ret - deduction;
                 const margin = rev > 0 ? profit / rev * 100 : 0;
                 return <span style={{ fontSize: 12, color: 'var(--txt2)' }}>
                   Прибыль: <b style={{ color: kpiColor('profit', profit) }}>{fmt(profit)} ₸</b>
@@ -1421,11 +2004,13 @@ function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDel
             </div>
             <button className="btn btn-primary btn-full" onClick={async () => {
               const rev = +editRec.rev || 0, ads = +editRec.ads || 0, cost = +editRec.cost || 0;
-              const comm = +editRec.comm || 0, logF = +editRec.log_f || 0, logR = +editRec.log_r || 0, ret = +editRec.ret || 0;
-              const profit = rev - ads - cost - comm - logF - logR - ret;
+              const comm = +editRec.comm || 0, cabComm = +editRec.cab_comm || 0, logF = +editRec.log_f || 0, logR = +editRec.log_r || 0, ret = +editRec.ret || 0;
+              const netRev = rev - ret;
+              const deduction = netRev * deductionPct / 100;
+              const profit = rev - ads - cost - comm - cabComm - logF - logR - ret - deduction;
               const margin = rev > 0 ? profit / rev * 100 : 0;
               const drr    = rev > 0 ? ads    / rev * 100 : 0;
-              const updated = await api.updateHistory(editRec.id, { ...editRec, rev, ads, cost, comm, log_f: logF, log_r: logR, ret, profit, margin, drr });
+              const updated = await api.updateHistory(editRec.id, { ...editRec, rev, ads, cost, comm, cab_comm: cabComm, log_f: logF, log_r: logR, ret, profit, margin, drr });
               setHist(h => h.map(r => r.id === updated.id ? updated : r));
               setEditRec(null);
             }}>Сохранить</button>
@@ -1455,7 +2040,7 @@ function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDel
         <div className="kpi-grid" style={{ marginBottom: 16 }}>
           {[
             { l: 'Выручка', v: summary.rev,    fmt: 'money', col: 'var(--blue-txt)',               type: 'rev' },
-            { l: 'Расходы', v: summary.cost + summary.ads + summary.comm + summary.log_f + summary.log_r + summary.ret, fmt: 'money', col: 'var(--red-txt)', type: 'rev' },
+            { l: 'Расходы', v: summary.cost + summary.ads + summary.comm + summary.cab_comm + summary.log_f + summary.log_r + summary.ret, fmt: 'money', col: 'var(--red-txt)', type: 'rev' },
             { l: 'Прибыль', v: summary.profit, fmt: 'money', col: kpiColor('profit',summary.profit), type: 'profit' },
             { l: 'Маржа',   v: summary.margin, fmt: 'pct',   col: kpiColor('margin',summary.margin), type: 'margin' },
           ].map(k => (
@@ -1503,7 +2088,8 @@ function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDel
                 <th style={{ textAlign: 'left' }}>Дата</th>
                 <th style={{ textAlign: 'left' }}>Кабинет</th>
                 {isAdmin && <th style={{ textAlign: 'left' }}>Сотрудник</th>}
-                <th>Выручка</th><th>Себес.</th><th>Реклама</th><th>Комиссия</th>
+                <th>Источник</th>
+                <th>Выручка</th><th>Себес.</th><th>Реклама</th><th>Комиссия</th><th>Ком.каб.</th>
                 <th>Логистика</th><th>Возвраты</th><th>Прибыль</th><th>Маржа</th><th>ДРР</th>
                 <th style={{ textAlign: 'left' }}>Заметка</th>
                 <th></th>
@@ -1530,10 +2116,18 @@ function HistoryPanel({ history, setHist, users, cabs, isAdmin, userLogin, onDel
                         </div>
                       </td>
                     )}
+                    <td style={{ textAlign: 'center' }}>
+                      <span className="badge" style={{
+                        background: h.source === 'wb' ? 'var(--green-bg)' : 'var(--blue-bg)',
+                        color: h.source === 'wb' ? 'var(--green-txt)' : 'var(--blue-txt)',
+                        fontSize: 10,
+                      }}>{h.source === 'wb' ? 'WB API' : 'Ручная'}</span>
+                    </td>
                     <td style={{ textAlign: 'right', color: 'var(--blue-txt)', fontWeight: 600 }}>{fmt(h.rev)}</td>
                     <td style={{ textAlign: 'right', color: 'var(--red-txt)' }}>{fmt(h.cost)}</td>
                     <td style={{ textAlign: 'right', color: 'var(--yellow-txt)' }}>{fmt(h.ads)}</td>
                     <td style={{ textAlign: 'right', color: 'var(--red-txt)' }}>{fmt(h.comm)}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--red-txt)' }}>{fmt(h.cab_comm)}</td>
                     <td style={{ textAlign: 'right', color: 'var(--txt2)' }}>{fmt(parseFloat(h.log_f) + parseFloat(h.log_r))}</td>
                     <td style={{ textAlign: 'right', color: 'var(--red-txt)' }}>{fmt(h.ret)}</td>
                     <td style={{ textAlign: 'right', fontWeight: 700, color: kpiColor('profit', parseFloat(h.profit)) }}>{fmt(h.profit)}</td>
@@ -1576,6 +2170,28 @@ function ReportPanel({ history, users, allCabs, isAdmin, userLogin }) {
   const [period,   setPeriod]   = useState('month');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo,   setDateTo]   = useState('');
+  const [apiData,  setApiData]  = useState(null);
+
+  // Fetch accurate data from dashboard API (finance reports)
+  useEffect(() => {
+    const load = async () => {
+      const p = PERIODS.find(x => x.k === period);
+      let from = dateFrom, to = dateTo;
+      if (!from && !to && p && p.days !== Infinity) {
+        const now = new Date();
+        const st = new Date();
+        st.setDate(st.getDate() - p.days);
+        from = st.toISOString().split('T')[0];
+        to = now.toISOString().split('T')[0];
+      }
+      if (!from || !to) { setApiData(null); return; }
+      try {
+        const data = await api.getDashboard(from, to);
+        setApiData(data);
+      } catch { setApiData(null); }
+    };
+    load();
+  }, [period, dateFrom, dateTo]);
 
   const visible = isAdmin ? history : history.filter(h => h.user_login === userLogin);
 
@@ -1583,29 +2199,39 @@ function ReportPanel({ history, users, allCabs, isAdmin, userLogin }) {
     filterByRange(visible, 'date', { period, dateFrom, dateTo }),
     [visible, period, dateFrom, dateTo]);
 
-  // Выкупы = выручка − комиссия − логистика − возвраты − реклама
+  // Выкупы = выручка − комиссии − логистика − реклама
   const rowBuyouts = r => {
-    const rev  = parseFloat(r.rev)   || 0;
-    const comm = parseFloat(r.comm)  || 0;
-    const logF = parseFloat(r.log_f) || 0;
-    const logR = parseFloat(r.log_r) || 0;
-    const ret  = parseFloat(r.ret)   || 0;
-    const ads  = parseFloat(r.ads)   || 0;
-    return rev - comm - logF - logR - ret - ads;
+    const rev     = parseFloat(r.rev)      || 0;
+    const comm    = parseFloat(r.comm)     || 0;
+    const cabComm = parseFloat(r.cab_comm) || 0;
+    const logF    = parseFloat(r.log_f)    || 0;
+    const logR    = parseFloat(r.log_r)    || 0;
+    const ads     = parseFloat(r.ads)      || 0;
+    return rev - comm - cabComm - logF - logR - ads;
   };
 
-  // Данные по кабинетам
+  // Use API data for per-cabinet when available (from finance reports)
   const byCab = useMemo(() => {
+    if (apiData?.byCab) {
+      return apiData.byCab.map(c => ({
+        name: c.cab_name, rev: c.rev, profit: c.profit, ads: c.ads || 0, 
+        cost: c.cost || 0, comm: c.comm || 0, cabComm: 0, logF: 0, logR: c.logistics || 0, 
+        ret: 0, buyoutsSum: c.for_pay || 0, cnt: 1, days: new Set([1]),
+        buyoutPct: '—', margin: c.margin || 0, drr: c.drr || 0, dailyRev: c.rev, dailyB: 0,
+      })).sort((a,b) => b.buyoutsSum - a.buyoutsSum);
+    }
+    // Fallback to history records
     const map = {};
     filtered.forEach(r => {
       const k = r.cabinet || '—';
-      if (!map[k]) map[k] = { rev: 0, buyoutsSum: 0, profit: 0, ads: 0, cost: 0, comm: 0, logF: 0, logR: 0, ret: 0, cnt: 0, days: new Set() };
+      if (!map[k]) map[k] = { rev: 0, buyoutsSum: 0, profit: 0, ads: 0, cost: 0, comm: 0, cabComm: 0, logF: 0, logR: 0, ret: 0, cnt: 0, days: new Set() };
       map[k].rev       += parseFloat(r.rev)    || 0;
       map[k].buyoutsSum+= rowBuyouts(r);
       map[k].profit    += parseFloat(r.profit) || 0;
       map[k].ads       += parseFloat(r.ads)    || 0;
       map[k].cost      += parseFloat(r.cost)   || 0;
       map[k].comm      += parseFloat(r.comm)   || 0;
+      map[k].cabComm   += parseFloat(r.cab_comm)|| 0;
       map[k].logF      += parseFloat(r.log_f)  || 0;
       map[k].logR      += parseFloat(r.log_r)  || 0;
       map[k].ret       += parseFloat(r.ret)    || 0;
@@ -1618,18 +2244,25 @@ function ReportPanel({ history, users, allCabs, isAdmin, userLogin }) {
       return {
         name, ...m,
         buyoutPct: cab?.buyout ?? '—',
-        margin:    m.rev > 0 ? m.profit     / m.rev * 100 : 0,
+        margin:    m.rev - m.ret > 0 ? m.profit / (m.rev - m.ret) * 100 : 0,
         marginB:   m.buyoutsSum > 0 ? m.profit / m.buyoutsSum * 100 : 0,
-        drr:       m.rev > 0 ? m.ads        / m.rev * 100 : 0,
+        drr:       m.rev - m.ret > 0 ? m.ads    / (m.rev - m.ret) * 100 : 0,
         dailyRev:  m.rev / days,
         dailyB:    m.buyoutsSum / days,
       };
     }).sort((a, b) => b.buyoutsSum - a.buyoutsSum);
   }, [filtered, allCabs]);
 
-  // Суммарные итоги
+  // Use API data for totals when available
   const totals = useMemo(() => {
-    const t = { rev: 0, buyoutsSum: 0, profit: 0, ads: 0, cost: 0, comm: 0, logF: 0, logR: 0, ret: 0 };
+    if (apiData?.totals) {
+      const t = apiData.totals;
+      return { rev: t.rev, buyoutsSum: t.for_pay || 0, profit: t.profit, ads: t.ads || 0,
+        cost: t.cost || 0, comm: t.logistics || t.comm || 0, cabComm: 0, logF: 0, logR: 0, 
+        ret: 0, drr: t.drr || 0, margin: t.margin || 0 };
+    }
+    // Fallback to history records
+    const t = { rev: 0, buyoutsSum: 0, profit: 0, ads: 0, cost: 0, comm: 0, cabComm: 0, logF: 0, logR: 0, ret: 0 };
     filtered.forEach(r => {
       t.rev       += parseFloat(r.rev)    || 0;
       t.buyoutsSum+= rowBuyouts(r);
@@ -1637,12 +2270,14 @@ function ReportPanel({ history, users, allCabs, isAdmin, userLogin }) {
       t.ads       += parseFloat(r.ads)    || 0;
       t.cost      += parseFloat(r.cost)   || 0;
       t.comm      += parseFloat(r.comm)   || 0;
+      t.cabComm   += parseFloat(r.cab_comm)|| 0;
       t.logF      += parseFloat(r.log_f)  || 0;
       t.logR      += parseFloat(r.log_r)  || 0;
       t.ret       += parseFloat(r.ret)    || 0;
     });
-    t.drr    = t.rev > 0 ? t.ads    / t.rev * 100 : 0;
-    t.margin = t.rev > 0 ? t.profit / t.rev * 100 : 0;
+    const netRev = t.rev - t.ret;
+    t.drr    = netRev > 0 ? t.ads    / netRev * 100 : 0;
+    t.margin = netRev > 0 ? t.profit / netRev * 100 : 0;
     return t;
   }, [filtered]);
 
@@ -1780,6 +2415,7 @@ function ReportPanel({ history, users, allCabs, isAdmin, userLogin }) {
                 { l: 'ДРР %',         v: fmtP(totals.drr)      + '%',  col: 'var(--yellow-txt)', bg: 'var(--yellow-bg)' },
                 { l: 'Себестоимость', v: fmt(totals.cost)      + ' ₸', col: 'var(--red-txt)',    bg: 'var(--red-bg)' },
                 { l: 'Комиссия ВБ',   v: fmt(totals.comm)      + ' ₸', col: 'var(--red-txt)',    bg: 'var(--red-bg)' },
+                { l: 'Комиссия каб.', v: fmt(totals.cabComm)   + ' ₸', col: 'var(--red-txt)',    bg: 'var(--red-bg)' },
                 { l: 'Логистика',     v: fmt(totals.logF + totals.logR) + ' ₸', col: 'var(--red-txt)', bg: 'var(--red-bg)' },
                 { l: 'Возвраты',      v: fmt(totals.ret)       + ' ₸', col: 'var(--red-txt)',    bg: 'var(--red-bg)' },
                 { l: 'Прибыль',       v: fmt(totals.profit)    + ' ₸', col: kpiColor('profit', totals.profit), bg: totals.profit >= 0 ? 'var(--green-bg)' : 'var(--red-bg)' },
@@ -1796,6 +2432,546 @@ function ReportPanel({ history, users, allCabs, isAdmin, userLogin }) {
 
         </>
       )}
+    </div>
+  );
+}
+
+// ── Сводки ────────────────────────────────────────────────────────────────────
+function SummariesPanel({ allCabs = [] }) {
+  const [type, setType] = useState('day');
+
+  function defaultDatesFor(type) {
+    if (type === 'day') {
+      const d = new Date(); d.setDate(d.getDate() - 1);
+      const y = d.toISOString().split('T')[0];
+      return { from: y, to: y };
+    }
+    if (type === 'month') {
+      const d = new Date(); d.setMonth(d.getMonth() - 1);
+      const from = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+      const to = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+      return { from, to };
+    }
+    // category, article, product: last 7 days
+    const d = new Date();
+    const to = d.toISOString().split('T')[0];
+    d.setDate(d.getDate() - 7);
+    return { from: d.toISOString().split('T')[0], to };
+  }
+
+  const defs = defaultDatesFor('day');
+  const [dateFrom, setDateFrom] = useState(defs.from);
+  const [dateTo, setDateTo] = useState(defs.to);
+  const [cabId, setCabId] = useState('all');
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    const d = defaultDatesFor(type);
+    setDateFrom(d.from); setDateTo(d.to);
+  }, [type]);
+
+  const fetchByType = useCallback(async () => {
+    if (type === 'day') return api.getDailyReport(dateFrom, dateTo, cabId);
+    if (type === 'category') return api.getCategoryReport(dateFrom, dateTo, cabId);
+    if (type === 'month') return api.getMonthlyReport(dateFrom, dateTo, cabId);
+    if (type === 'article') return api.getArticleReport(dateFrom, dateTo, cabId);
+    if (type === 'product') return api.getProductReport(dateFrom, dateTo, cabId);
+    return [];
+  }, [type, dateFrom, dateTo, cabId]);
+
+  const refresh = useCallback(async () => {
+    setLoading(true); setErr('');
+    try {
+      const data = await fetchByType();
+      setRows(data);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }, [fetchByType]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setErr('');
+    fetchByType().then(data => {
+      if (!cancelled) { setRows(data); setLoading(false); }
+    }).catch(e => {
+      if (!cancelled) { setErr(e.message); setLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [fetchByType]);
+
+  const totals = useMemo(() => {
+    const rev = rows.reduce((s, r) => s + num(r.rev), 0);
+    const cost = rows.reduce((s, r) => s + num(r.cost), 0);
+    const comm = rows.reduce((s, r) => s + num(r.comm), 0);
+    const ads = rows.reduce((s, r) => s + num(r.ads), 0);
+    const cabComm = rows.reduce((s, r) => s + num(r.cab_comm), 0);
+    const logF = rows.reduce((s, r) => s + num(r.log_f), 0);
+    const logR = rows.reduce((s, r) => s + num(r.log_r), 0);
+    const ret = rows.reduce((s, r) => s + num(r.ret), 0);
+    const profit = rows.reduce((s, r) => s + num(r.profit), 0);
+    const qty = rows.reduce((s, r) => s + num(r.qty), 0);
+    const netRev = rev - ret;
+    return { rev, cost, comm, ads, cabComm, logF, logR, ret, profit, qty, expenses: cost + comm + ads + cabComm + logF + logR + ret,
+      margin: netRev > 0 ? (profit / netRev) * 100 : 0,
+      drr: netRev > 0 ? (ads / netRev) * 100 : 0 };
+  }, [rows]);
+
+  return (
+    <div className="fade-in">
+      <div className="section-header" style={{ marginBottom: 16 }}>
+        <div className="section-title">Сводки</div>
+      </div>
+      {err && <div className="err-msg" style={{ marginBottom: 12 }}>{err}</div>}
+
+      <div className="card" style={{ padding: '16px 20px', marginBottom: 16 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
+          <div className="field" style={{ minWidth: 180 }}>
+            <label className="form-label">Тип сводки</label>
+            <select className="form-input" value={type} onChange={e => setType(e.target.value)}>
+              <option value="day">По дням</option>
+              <option value="category">По категориям</option>
+              <option value="month">По месяцам</option>
+              <option value="article">По артикулам</option>
+              <option value="product">По товарам</option>
+            </select>
+          </div>
+          <div className="field" style={{ minWidth: 200 }}>
+            <label className="form-label">Кабинет</label>
+            <select className="form-input" value={cabId} onChange={e => setCabId(e.target.value)}>
+              <option value="all">Все кабинеты</option>
+              {allCabs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          {type === 'day' ? (
+            <div className="field">
+              <label className="form-label">Дата</label>
+              <input type="date" className="form-input" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setDateTo(e.target.value); }} />
+            </div>
+          ) : type === 'month' ? (
+            <>
+            <div className="field">
+              <label className="form-label">Месяц</label>
+              <select className="form-input" value={dateFrom.slice(0,7)} onChange={e => {
+                const y = parseInt(e.target.value.slice(0,4)), m = parseInt(e.target.value.slice(5,7));
+                setDateFrom(new Date(y, m-1, 1).toISOString().split('T')[0]);
+                setDateTo(new Date(y, m, 0).toISOString().split('T')[0]);
+              }}>
+                {(() => {
+                  const opts = [];
+                  const now = new Date();
+                  for (let i = 0; i < 12; i++) {
+                    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                    const val = d.toISOString().split('T')[0].slice(0,7);
+                    const label = d.toLocaleDateString('ru', { month: 'long', year: 'numeric' });
+                    opts.push(<option key={val} value={val}>{label}</option>);
+                  }
+                  return opts;
+                })()}
+              </select>
+            </div>
+            <div className="field">
+              <label className="form-label" style={{ opacity: 0 }}>.</label>
+              <select className="form-input" value={String(parseInt(dateFrom.slice(0,4)))} onChange={e => {
+                const y = parseInt(e.target.value);
+                const m = parseInt(dateFrom.slice(5,7));
+                setDateFrom(new Date(y, m-1, 1).toISOString().split('T')[0]);
+                setDateTo(new Date(y, m, 0).toISOString().split('T')[0]);
+              }} style={{ width: 80 }}>
+                {(() => {
+                  const opts = [];
+                  const now = new Date().getFullYear();
+                  for (let y = now; y >= now - 3; y--) {
+                    opts.push(<option key={y} value={y}>{y}</option>);
+                  }
+                  return opts;
+                })()}
+              </select>
+            </div>
+            </>
+          ) : (
+            <>
+            <div className="field">
+              <label className="form-label">С</label>
+              <input type="date" className="form-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+            </div>
+            <div className="field">
+              <label className="form-label">По</label>
+              <input type="date" className="form-input" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+            </div>
+            </>
+          )}
+          <button className="btn btn-primary" onClick={refresh} disabled={loading}>
+            {loading ? '⟳ Загрузка…' : '↻ Обновить'}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ fontSize: 12, color: 'var(--txt2)', marginBottom: 12 }}>
+        {type === 'day' ? (
+          <>Дата: <b>{new Date(dateFrom).toLocaleDateString('ru', { day: '2-digit', month: 'long', year: 'numeric' })}</b></>
+        ) : type === 'month' ? (
+          <>Месяц: <b>{new Date(dateFrom).toLocaleDateString('ru', { month: 'long', year: 'numeric' })}</b></>
+        ) : (
+          <>Период: <b>{new Date(dateFrom).toLocaleDateString('ru', { day: '2-digit', month: '2-digit', year: 'numeric' })} — {new Date(dateTo).toLocaleDateString('ru', { day: '2-digit', month: '2-digit', year: 'numeric' })}</b></>
+        )}
+        {loading
+          ? ' · загрузка…'
+          : rows.length
+            ? ` · ${rows.length} ${type === 'day' ? 'дней' : type === 'month' ? 'месяцев' : type === 'article' ? 'артикулов' : type === 'product' ? 'товаров' : 'категорий'}`
+            : ' · нет данных за период'}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 16 }}>
+        <KpiCard label="Выручка" value={`${fmt(totals.rev)} ₸`} />
+        <KpiCard label="Расходы" value={`${fmt(totals.expenses)} ₸`} />
+        <KpiCard label="Прибыль" value={`${fmt(totals.profit)} ₸`} color={totals.profit >= 0 ? 'var(--green-txt)' : 'var(--red-txt)'} />
+        <KpiCard label="Маржа" value={`${fmtP(totals.margin)}%`} />
+        <KpiCard label="ДРР" value={`${fmtP(totals.drr)}%`} />
+        <KpiCard label="Заказы" value={`${fmt(totals.qty)}`} />
+        <KpiCard label="Удержания" value={`${fmt(totals.deduction || 0)} ₸`} />
+      </div>
+
+      <div className="card" style={{ padding: '20px 24px', marginBottom: 16 }}>
+        <div className="section-title" style={{ marginBottom: 12 }}>
+          {type === 'day' ? 'Сводка по дням' : type === 'month' ? 'Сводка по месяцам' : type === 'article' ? 'Сводка по артикулам' : type === 'product' ? 'Сводка по товарам' : 'Сводка по категориям'}
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table>
+            <thead><tr>
+              <th>{type === 'day' ? 'Дата' : type === 'month' ? 'Месяц' : type === 'article' ? 'Артикул' : type === 'product' ? 'Товар' : 'Категория'}</th><th>Заказы</th><th>Выручка</th><th>Себест.</th><th>Комиссия</th><th>Реклама</th><th>Прибыль</th><th>Маржа</th><th>ДРР</th>
+            </tr></thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={type === 'day' ? r.date : type === 'month' ? r.month : type === 'article' ? r.article : type === 'product' ? r.product : r.category}>
+                  <td>
+                    {type === 'day'
+                      ? r.date?.slice(0, 10)
+                      : type === 'month'
+                        ? r.month
+                        : type === 'article'
+                          ? <>{r.article}{r.name && r.name !== r.article && <span style={{ color: 'var(--txt2)', marginLeft: 6 }}>({r.name})</span>}</>
+                          : type === 'product'
+                            ? <>{r.product}{r.articles > 1 && <span style={{ color: 'var(--txt2)', marginLeft: 6 }}>({r.articles} арт.)</span>}</>
+                            : r.category}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>{fmt(num(r.qty))}</td>
+                  <td style={{ textAlign: 'right' }}>{fmt(num(r.rev))} ₸</td>
+                  <td style={{ textAlign: 'right' }}>{fmt(num(r.cost))} ₸</td>
+                  <td style={{ textAlign: 'right' }}>{fmt(num(r.comm))} ₸</td>
+                  <td style={{ textAlign: 'right' }}>{fmt(num(r.ads))} ₸</td>
+                  <td style={{ textAlign: 'right', fontWeight: 600, color: num(r.profit) >= 0 ? 'var(--green-txt)' : 'var(--red-txt)' }}>{fmt(num(r.profit))} ₸</td>
+                  <td style={{ textAlign: 'right' }}>{fmtP(num(r.margin))}%</td>
+                  <td style={{ textAlign: 'right' }}>{fmtP(num(r.drr))}%</td>
+                </tr>
+              ))}
+              {rows.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--txt3)' }}>Нет данных за период</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Отчёт по менеджерам ───────────────────────────────────────────────────────
+function ManagersReportPanel() {
+  const [users, setUsers] = useState([]);
+  const [userId, setUserId] = useState('');
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date(); d.setMonth(d.getMonth() - 1); return d.toISOString().split('T')[0];
+  });
+  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [report, setReport] = useState([]);
+  const [detail, setDetail] = useState([]);
+  const [campaigns, setCampaigns] = useState([]);
+  const [unassigned, setUnassigned] = useState([]);
+  const [mode, setMode] = useState('manager');
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getUsers().then(rows => {
+      if (cancelled) return;
+      const withPattern = rows.filter(u => u.pattern && String(u.pattern).trim());
+      setUsers(withPattern);
+      if (withPattern.length && !userId) setUserId(String(withPattern[0].id));
+    }).catch(e => { if (!cancelled) setErr(e.message); });
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  const refresh = useCallback(async () => {
+    setLoading(true); setErr('');
+    try {
+      if (mode === 'manager') {
+        if (!userId) return;
+        const [r, d, c] = await Promise.all([
+          api.getUserReport(userId, dateFrom, dateTo),
+          api.getUserDetail(userId, dateFrom, dateTo),
+          api.getUserCampaigns(userId, dateFrom, dateTo),
+        ]);
+        setReport(r);
+        setDetail(d);
+        setCampaigns(c);
+      } else {
+        const u = await api.getUnassignedCampaigns(dateFrom, dateTo);
+        setUnassigned(u);
+      }
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }, [mode, userId, dateFrom, dateTo]);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => {
+    if (mode === 'manager' && !userId) return;
+    let cancelled = false;
+    setLoading(true); setErr('');
+    if (mode === 'manager') {
+      Promise.all([
+        api.getUserReport(userId, dateFrom, dateTo),
+        api.getUserDetail(userId, dateFrom, dateTo),
+        api.getUserCampaigns(userId, dateFrom, dateTo),
+      ]).then(([r, d, c]) => {
+        if (cancelled) return;
+        setReport(r);
+        setDetail(d);
+        setCampaigns(c);
+        setLoading(false);
+      }).catch(e => {
+        if (!cancelled) { setErr(e.message); setLoading(false); }
+      });
+    } else {
+      api.getUnassignedCampaigns(dateFrom, dateTo).then(u => {
+        if (cancelled) return;
+        setUnassigned(u);
+        setLoading(false);
+      }).catch(e => {
+        if (!cancelled) { setErr(e.message); setLoading(false); }
+      });
+    }
+    return () => { cancelled = true; };
+  }, [mode, userId, dateFrom, dateTo]);
+
+  const totals = useMemo(() => {
+    const rev = report.reduce((s, r) => s + num(r.rev), 0);
+    const ads = report.reduce((s, r) => s + num(r.ads), 0);
+    const cost = report.reduce((s, r) => s + num(r.cost), 0);
+    const comm = report.reduce((s, r) => s + num(r.comm), 0);
+    const cabComm = report.reduce((s, r) => s + num(r.cab_comm), 0);
+    const logF = report.reduce((s, r) => s + num(r.log_f), 0);
+    const logR = report.reduce((s, r) => s + num(r.log_r), 0);
+    const ret = report.reduce((s, r) => s + num(r.ret), 0);
+    const profit = report.reduce((s, r) => s + num(r.profit), 0);
+    const netRev = rev - ret;
+    return { rev, ads, cost, comm, cabComm, logF, logR, ret, profit, expenses: ads + cost + comm + cabComm + logF + logR + ret,
+      margin: netRev > 0 ? (profit / netRev) * 100 : 0,
+      drr: netRev > 0 ? (ads / netRev) * 100 : 0 };
+  }, [report]);
+
+  const unassignedTotals = useMemo(() => {
+    const sum = unassigned.reduce((s, x) => s + num(x.sum), 0);
+    const views = unassigned.reduce((s, x) => s + num(x.views), 0);
+    const clicks = unassigned.reduce((s, x) => s + num(x.clicks), 0);
+    const orders = unassigned.reduce((s, x) => s + num(x.orders), 0);
+    return { sum, views, clicks, orders };
+  }, [unassigned]);
+
+  return (
+    <div className="fade-in">
+      <div className="section-header" style={{ marginBottom: 16 }}>
+        <div className="section-title">{mode === 'unassigned' ? 'Кампании без владельца' : 'Отчёт по менеджеру'}</div>
+      </div>
+      {err && <div className="err-msg" style={{ marginBottom: 12 }}>{err}</div>}
+
+      <div className="card" style={{ padding: '16px 20px', marginBottom: 16 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
+          <div className="field" style={{ minWidth: 180 }}>
+            <label className="form-label">Отчёт</label>
+            <select className="form-input" value={mode} onChange={e => setMode(e.target.value)}>
+              <option value="manager">По менеджеру</option>
+              <option value="unassigned">Без владельца</option>
+            </select>
+          </div>
+          {mode === 'manager' && (
+            <div className="field" style={{ minWidth: 220 }}>
+              <label className="form-label">Менеджер</label>
+              <select className="form-input" value={userId} onChange={e => setUserId(e.target.value)}>
+                <option value="">— выберите —</option>
+                {users.map(u => <option key={u.id} value={u.id}>{u.name || u.login}</option>)}
+              </select>
+            </div>
+          )}
+          <div className="field">
+            <label className="form-label">С</label>
+            <input type="date" className="form-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+          </div>
+          <div className="field">
+            <label className="form-label">По</label>
+            <input type="date" className="form-input" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+          </div>
+          <button className="btn btn-primary" onClick={refresh} disabled={loading || (mode === 'manager' && !userId)}>
+            {loading ? '⟳ Загрузка…' : '↻ Обновить'}
+          </button>
+        </div>
+      </div>
+
+      {mode === 'unassigned' ? (
+        <>
+          <div style={{ fontSize: 12, color: 'var(--txt2)', marginBottom: 12 }}>
+            Период: <b>{new Date(dateFrom).toLocaleDateString('ru', { day: '2-digit', month: '2-digit', year: 'numeric' })} — {new Date(dateTo).toLocaleDateString('ru', { day: '2-digit', month: '2-digit', year: 'numeric' })}</b>
+            {loading ? ' · загрузка…' : unassigned.length ? ` · ${unassigned.length} кампаний` : ' · нет непривязанных кампаний за период'}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
+            <KpiCard label="Расход" value={`${fmt(unassignedTotals.sum)} ₸`} />
+            <KpiCard label="Показы" value={`${fmt(unassignedTotals.views)}`} />
+            <KpiCard label="Клики" value={`${fmt(unassignedTotals.clicks)}`} />
+            <KpiCard label="Заказы" value={`${fmt(unassignedTotals.orders)}`} />
+          </div>
+
+          <div className="card" style={{ padding: '20px 24px', marginBottom: 16 }}>
+            <div className="section-title" style={{ marginBottom: 12 }}>Кампании без владельца</div>
+            <div style={{ fontSize: 12, color: 'var(--txt2)', marginBottom: 12 }}>
+              Рекламные кампании, у которых не удалось определить менеджера по шаблону из названия.
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead><tr>
+                  <th>Кабинет</th><th>Кампания</th><th>Дней</th><th>Показы</th><th>Клики</th><th>Заказы</th><th>Расход</th>
+                </tr></thead>
+                <tbody>
+                  {unassigned.map((c, i) => (
+                    <tr key={i}>
+                      <td>{c.cab_name}</td>
+                      <td>{c.campaign_name}</td>
+                      <td style={{ textAlign: 'center' }}>{fmt(num(c.days))}</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(c.views))}</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(c.clicks))}</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(c.orders))}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(num(c.sum))} ₸</td>
+                    </tr>
+                  ))}
+                  {unassigned.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--txt3)' }}>Нет непривязанных кампаний за период</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      ) : !userId ? (
+        <div className="card" style={{ padding: 30, textAlign: 'center', color: 'var(--txt3)' }}>
+          Выберите менеджера, чтобы увидеть отчёт.
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 12, color: 'var(--txt2)', marginBottom: 12 }}>
+            Период: <b>{new Date(dateFrom).toLocaleDateString('ru', { day: '2-digit', month: '2-digit', year: 'numeric' })} — {new Date(dateTo).toLocaleDateString('ru', { day: '2-digit', month: '2-digit', year: 'numeric' })}</b>
+            {loading ? ' · загрузка…' : report.length ? ` · данные за ${[...new Set(report.map(r => r.cab_name))].length} каб.` : ' · нет данных за период'}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
+            <KpiCard label="Выручка" value={`${fmt(totals.rev)} ₸`} />
+            <KpiCard label="Расходы" value={`${fmt(totals.expenses)} ₸`} />
+            <KpiCard label="Прибыль" value={`${fmt(totals.profit)} ₸`} color={totals.profit >= 0 ? 'var(--green-txt)' : 'var(--red-txt)'} />
+            <KpiCard label="Маржа" value={`${fmtP(totals.margin)}%`} />
+        <KpiCard label="ДРР" value={`${fmtP(totals.drr)}%`} />
+        <KpiCard label="Удержания" value={`${fmt(totals.deduction || 0)} ₸`} />
+          </div>
+
+          <div className="card" style={{ padding: '20px 24px', marginBottom: 16 }}>
+            <div className="section-title" style={{ marginBottom: 12 }}>По кабинетам</div>
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead><tr>
+                  <th>Кабинет</th><th>Выручка</th><th>Реклама</th><th>Себест.</th><th>Комиссия</th><th>Эквайринг</th><th>Логистика</th><th>Прибыль</th><th>Маржа</th><th>ДРР</th>
+                </tr></thead>
+                <tbody>
+                  {report.map(r => (
+                    <tr key={r.cab_id}>
+                      <td>{r.cab_name}</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(r.rev))} ₸</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(r.ads))} ₸</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(r.cost))} ₸</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(r.comm))} ₸</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(r.cab_comm))} ₸</td>
+                      <td style={{ textAlign: 'right' }}>{fmt((num(r.log_f) || 0) + (num(r.log_r) || 0))} ₸</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600, color: num(r.profit) >= 0 ? 'var(--green-txt)' : 'var(--red-txt)' }}>{fmt(num(r.profit))} ₸</td>
+                      <td style={{ textAlign: 'right' }}>{fmtP(num(r.margin))}%</td>
+                      <td style={{ textAlign: 'right' }}>{fmtP(num(r.drr))}%</td>
+                    </tr>
+                  ))}
+                  {report.length === 0 && <tr><td colSpan={10} style={{ textAlign: 'center', color: 'var(--txt3)' }}>Нет данных за период</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: '20px 24px', marginBottom: 16 }}>
+            <div className="section-title" style={{ marginBottom: 12 }}>Рекламные кампании</div>
+            <div style={{ fontSize: 12, color: 'var(--txt2)', marginBottom: 12 }}>
+              Кампании привязываются к пользователю по шаблону из названия. Выручка, расходы и прибыль кабинета распределяются пропорционально рекламным расходам пользователя.
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead><tr>
+                  <th>Кабинет</th><th>Кампания</th><th>Дней</th><th>Показы</th><th>Клики</th><th>Заказы</th><th>Расход</th>
+                </tr></thead>
+                <tbody>
+                  {campaigns.map((c, i) => (
+                    <tr key={i}>
+                      <td>{c.cab_name}</td>
+                      <td>{c.campaign_name}</td>
+                      <td style={{ textAlign: 'center' }}>{fmt(num(c.days))}</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(c.views))}</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(c.clicks))}</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(c.orders))}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(num(c.sum))} ₸</td>
+                    </tr>
+                  ))}
+                  {campaigns.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--txt3)' }}>Нет привязанных кампаний за период</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: '20px 24px' }}>
+            <div className="section-title" style={{ marginBottom: 12 }}>Детализация по товарам</div>
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead><tr>
+                  <th>Дата</th><th>Кабинет</th><th>Артикул</th><th>Кол-во</th><th>Выручка</th><th>Себест.</th><th>Комиссия</th><th>Реклама</th><th>Прибыль</th>
+                </tr></thead>
+                <tbody>
+                  {detail.map((d, i) => (
+                    <tr key={i}>
+                      <td>{d.date?.slice(0, 10)}</td>
+                      <td>{d.cab_name}</td>
+                      <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{d.article}</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(d.qty))}</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(d.rev))} ₸</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(d.cost))} ₸</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(d.comm))} ₸</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(num(d.ads))} ₸</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600, color: num(d.profit) >= 0 ? 'var(--green-txt)' : 'var(--red-txt)' }}>{fmt(num(d.profit))} ₸</td>
+                    </tr>
+                  ))}
+                  {detail.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--txt3)' }}>Нет данных за период</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function KpiCard({ label, value, color }) {
+  return (
+    <div className="card" style={{ padding: '16px 20px' }}>
+      <div style={{ fontSize: 11, color: 'var(--txt3)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 700, color: color || 'var(--txt)' }}>{value}</div>
     </div>
   );
 }
@@ -2510,6 +3686,7 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem('wb_user') || 'null'); }
     catch { return null; }
   });
+  const isAdmin = user?.role === 'admin';
   const [users,   setUsers]   = useState([]);
   const [catalog, setCatalog] = useState([]);
   const [cabs,    setCabs]    = useState([]);   // кабинеты текущего пользователя
@@ -2518,8 +3695,9 @@ export default function App() {
   const [teams,       setTeams]       = useState([]);
   const [histItems,   setHistItems]   = useState([]);
   const [userGoals, setUserGoals] = useState([]); // [{user_id, month, goal}]
+  const [deductionPct, setDeductionPct] = useState(7.66);
   const [loading, setLoading] = useState(true);
-  const [appTab,  setAppTab]  = useState('calc');
+  const [appTab,  setAppTab]  = useState('dashboard');
 
   const [exRate,     setExRate]   = useState(6.74);
   const [rateDate,   setRateDate] = useState('—');
@@ -2553,6 +3731,22 @@ export default function App() {
     localStorage.setItem('wb_theme', theme);
   }, [theme]);
 
+  const mkRow = prod => ({ id: Date.now() + Math.random(), product: prod.name, qty: '', cost: prod.cost, comm: prod.comm });
+  const fetchRate = async () => {
+    setRStatus('loading');
+    try {
+      const res = await fetch('/api/rate');
+      if (!res.ok) throw new Error('bad response');
+      const data = await res.json();
+      if (data.rate) {
+        setExRate(data.rate);
+        setEditVal(String(data.rate));
+        setRateDate(new Date(data.date).toLocaleDateString('ru'));
+        setRStatus('ok');
+      } else throw new Error(data.error || 'no rate');
+    } catch { setRStatus('error'); }
+  };
+
   useEffect(() => {
     if (!user) return;
     setLoading(true);
@@ -2567,7 +3761,8 @@ export default function App() {
       safe(api.getUserGoals(curMonth), []),
       safe(api.getUserCabs(user.id), []),
       safe(api.getHistoryItems(), []),
-    ]).then(([cat, cabList, hist, userList, teamList, goalList, freshCabIds, items]) => {
+      safe(api.getSettings(), {}),
+    ]).then(([cat, cabList, hist, userList, teamList, goalList, freshCabIds, items, settings]) => {
       setCatalog(cat);
       setAllCabs(cabList);
       setHist(hist);
@@ -2575,6 +3770,8 @@ export default function App() {
       setTeams(teamList);
       setUserGoals(goalList);
       setHistItems(items);
+      const pct = parseFloat(settings.deduction_pct);
+      if (!isNaN(pct) && pct >= 0) setDeductionPct(pct);
       // freshCabIds — актуальные ID кабинетов, даже если назначили после логина
       const myCabIds = user?.role === 'admin' ? cabList.map(c => c.id) : freshCabIds.map(id => +id);
       const visibleCabs = user?.role === 'admin' ? cabList
@@ -2602,7 +3799,6 @@ export default function App() {
     }).finally(() => setLoading(false));
   }, [user]);
 
-  const mkRow = prod => ({ id: Date.now() + Math.random(), product: prod.name, qty: '', cost: prod.cost, comm: prod.comm });
   const addRow = () => { if (catalog.length) setRows(r => [...r, mkRow(catalog[0])]); };
 
   // Автосохранение черновика
@@ -2610,21 +3806,6 @@ export default function App() {
     if (!user) return;
     localStorage.setItem('wb_draft', JSON.stringify({ date, revenue, adsRub, rows }));
   }, [date, revenue, adsRub, rows]);
-
-  const fetchRate = async () => {
-    setRStatus('loading');
-    try {
-      const res = await fetch('/api/rate');
-      if (!res.ok) throw new Error('bad response');
-      const data = await res.json();
-      if (data.rate) {
-        setExRate(data.rate);
-        setEditVal(String(data.rate));
-        setRateDate(new Date(data.date).toLocaleDateString('ru'));
-        setRStatus('ok');
-      } else throw new Error(data.error || 'no rate');
-    } catch { setRStatus('error'); }
-  };
 
   const updateRow = (id, field, val) => {
     setRows(r => r.map(row => {
@@ -2641,24 +3822,36 @@ export default function App() {
   const adsKzt = num(adsRub) * exRate;
 
   const calc = useMemo(() => {
-    const rev = num(revenue), adsN = adsKzt, buyout = retRate / 100;
+    const rev = num(revenue), adsN = adsKzt, buyout = Math.max(retRate / 100, 0.01);
+    const cabObj = (isAdmin ? allCabs : cabs).find(c => c.name === cabinet) || {};
+    const isIU = cabObj.cab_type === 'iu';
+    const cabComm = isIU ? rev * 0.05 : 0;
     let cost = 0, comm = 0, logF = 0, totalQty = 0;
-    rows.forEach(row => {
+    const rowData = rows.map(row => {
       const qty = num(row.qty), c = num(row.cost), k = num(row.comm) / 100;
       const prod = catalog.find(p => p.name === row.product) || {};
-      const lr = logRub(prod.w, prod.d, prod.h);
-      cost += qty * c; comm += qty * c * k;
-      logF += lr !== null ? qty * (lr * coeff / buyout) * exRate : 0;
+      cost += qty * c;
       totalQty += qty;
+      return { qty, c, k, prod, rowCost: qty * c };
     });
-    if (!cost && rev) comm = rev * 0.25;
-    const ret  = rev * (1 - buyout);
-    const logR = totalQty * ((1 - buyout) / buyout) * 50 * coeff * exRate;
-    const profit = rev - cost - adsN - comm - logF - logR - ret;
-    return { rev, ads: adsN, adsRub: num(adsRub), cost, comm, logF, logR, ret, profit,
-      margin: rev > 0 ? profit / rev * 100 : 0,
-      drr: rev > 0 ? adsN / rev * 100 : 0 };
-  }, [revenue, adsKzt, adsRub, rows, exRate, coeff, retRate, catalog]);
+    // Категорийная комиссия всегда от доли выручки (пропорционально себестоимости строк)
+    rowData.forEach(({ k, rowCost, qty, prod }) => {
+      const rowRev = cost > 0 ? (rowCost / cost) * rev : 0;
+      comm += rowRev * k;
+      if (!isIU) {
+        const lr = logRub(prod.w, prod.d, prod.h);
+        logF += lr !== null ? qty * (lr * coeff / buyout) * exRate : 0;
+      }
+    });
+    const logR = isIU ? 0 : totalQty * ((1 - buyout) / buyout) * 50 * coeff * exRate;
+    const netRev = rev * (retRate / 100);
+    const deduction = netRev * deductionPct / 100;
+    const profit = netRev - cost - adsN - comm - cabComm - logF - logR - deduction;
+    return { rev, ads: adsN, adsRub: num(adsRub), cost, comm, cabComm, logF, logR, ret: 0, profit,
+      isIU, cabType: cabObj.cab_type || 'regular',
+      margin: netRev > 0 ? profit / netRev * 100 : 0,
+      drr: netRev > 0 ? adsN / netRev * 100 : 0 };
+  }, [revenue, adsKzt, adsRub, rows, exRate, coeff, retRate, deductionPct, catalog, cabinet, cabs, allCabs, isAdmin]);
 
   const save = async () => {
     if (!calc.rev) { alert('Введи выручку'); return; }
@@ -2668,8 +3861,8 @@ export default function App() {
         .map(r => ({ product: r.product, qty: num(r.qty), cost: num(r.cost), comm: num(r.comm) }));
       const rec = await api.addHistory({
         date, cabinet, user_login: user.login, user_id: user.id,
-        rev: calc.rev, ads: calc.ads, cost: calc.cost, comm: calc.comm,
-        log_f: calc.logF, log_r: calc.logR, ret: calc.ret,
+        rev: calc.rev, ads: calc.ads, cost: calc.cost, comm: calc.comm, cab_comm: calc.cabComm,
+        log_f: calc.logF, log_r: calc.logR, ret: 0,
         profit: calc.profit, margin: calc.margin, drr: calc.drr, comment,
         items,
       });
@@ -2684,13 +3877,13 @@ export default function App() {
     } catch (e) { alert('Ошибка: ' + e.message); }
   };
 
-  const isAdmin = user?.role === 'admin';
   const NAV = [
-    { k: 'calc',    l: 'Калькулятор' },
-    { k: 'history', l: 'История' },
-    { k: 'company', l: 'Компания' },
+    { k: 'dashboard', l: 'Дашборд' },
     { k: 'report',  l: 'Отчёт' },
+    { k: 'managers_report', l: 'Менеджеры' },
+    { k: 'summaries', l: 'Сводки' },
     { k: 'teams',   l: 'Команды' },
+    { k: 'company', l: 'Компания' },
     { k: 'products', l: 'Товары' },
     ...(isAdmin ? [{ k: 'admin', l: 'Администратор' }] : []),
   ];
@@ -2714,6 +3907,176 @@ export default function App() {
     setTemplates(updated);
     localStorage.setItem('wb_templates', JSON.stringify(updated));
   }, [templates]);
+
+  const CalculatorSection = () => (
+    <div className="fade-in">
+      {/* Баннер — сегодня не заполнено */}
+      {todayBanner && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14,
+          background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)',
+          borderRadius: 10, padding: '10px 16px' }}>
+          <span style={{ fontSize: 18 }}>⏰</span>
+          <span style={{ fontSize: 13, color: 'var(--yellow-txt)', flex: 1 }}>Сегодня ещё нет записи — не забудь заполнить статистику</span>
+          <button className="btn" style={{ fontSize: 11, padding: '3px 10px' }} onClick={() => setTodayBanner(false)}>✕</button>
+        </div>
+      )}
+      {/* Курс + Настройки */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+        <div className="rate-bar">
+          <span style={{ fontSize: 12, color: 'var(--txt3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Курс НБК</span>
+          {rateStatus === 'loading' && (
+            <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', color: 'var(--blue-txt)' }}>⟳</span>
+          )}
+          {rateStatus === 'ok' && !editRate && (
+            <>
+              <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--green-txt)' }}>1 ₽ = {exRate.toFixed(3)} ₸</span>
+              <span className="badge badge-green" style={{ fontSize: 10 }}>{rateDate}</span>
+            </>
+          )}
+          {rateStatus === 'error' && <span style={{ fontSize: 12, color: 'var(--red-txt)' }}>Не удалось загрузить</span>}
+          {editRate ? (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input type="number" value={editVal} step="0.001" className="form-input" style={{ width: 90, fontSize: 13 }}
+                onChange={e => setEditVal(e.target.value)} />
+              <button className="btn btn-primary" style={{ padding: '5px 12px' }} onClick={() => {
+                const v = parseFloat(editVal); if (v > 0) { setExRate(v); setRateDate('вручную'); } setEditRate(false);
+              }}>OK</button>
+            </div>
+          ) : (
+            <button className="btn" style={{ fontSize: 11, padding: '3px 10px' }} onClick={() => setEditRate(true)}>Изменить</button>
+          )}
+          <button className="btn" style={{ marginLeft: 'auto', fontSize: 11, opacity: rateStatus === 'loading' ? 0.5 : 1 }}
+            disabled={rateStatus === 'loading'} onClick={fetchRate}>⟳ Обновить</button>
+        </div>
+
+        {isAdmin ? (
+          <div className="card" style={{ padding: '10px 16px', display: 'flex', gap: 20, alignItems: 'center' }}>
+            {[{ l: 'Коэф. склада', v: coeff, s: setCoeff, min: 1, max: 5, step: 0.05 },
+              { l: 'Выкуп, %', v: retRate, s: setRet, min: 0, max: 100, step: 1 }].map(x => (
+              <div key={x.l} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 12, color: 'var(--txt2)', whiteSpace: 'nowrap' }}>{x.l}</span>
+                <input type="number" value={x.v} min={x.min} max={x.max} step={x.step}
+                  className="form-input" style={{ width: 72 }}
+                  onChange={e => x.s(parseFloat(e.target.value) || 0)} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="card" style={{ padding: '10px 16px', display: 'flex', gap: 16, alignItems: 'center' }}>
+            <span style={{ fontSize: 12, color: 'var(--txt3)' }}>Коэф. склада:</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>{coeff}</span>
+            <span style={{ fontSize: 12, color: 'var(--txt3)', marginLeft: 8 }}>Выкуп:</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>{retRate}%</span>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        {/* Форма */}
+        <div>
+          <div className="card" style={{ padding: '20px 24px', marginBottom: 12 }}>
+            <div className="section-title" style={{ marginBottom: 16 }}>Основные данные</div>
+            <div className="form-grid-2" style={{ marginBottom: 12 }}>
+              <div>
+                <label className="form-label">Дата</label>
+                <input type="date" value={date} onChange={e => setDate(e.target.value)} className="form-input" />
+              </div>
+              <div>
+                <label className="form-label">Кабинет</label>
+                <select value={cabinet} className="form-input" onChange={e => {
+                  const name = e.target.value;
+                  setCab(name);
+                  const cab = (isAdmin ? allCabs : cabs).find(c => c.name === name);
+                  if (cab?.buyout) setRet(+cab.buyout);
+                }}>
+                  {cabs.map(c => <option key={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="form-grid-2">
+              <div>
+                <label className="form-label">Выручка, ₸</label>
+                <input type="number" value={revenue} placeholder="0"
+                  onChange={e => setRev(e.target.value)} className="form-input" />
+              </div>
+              <div>
+                <label className="form-label">
+                  Реклама, ₽
+                  {num(adsRub) > 0 && (
+                    <span style={{ marginLeft: 6, color: 'var(--yellow-txt)', fontWeight: 400 }}>
+                      = {fmt(adsKzt)} ₸
+                    </span>
+                  )}
+                </label>
+                <input type="number" value={adsRub} placeholder="0 ₽"
+                  onChange={e => setAdsRub(e.target.value)} className="form-input" />
+              </div>
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: '20px 24px' }}>
+            <div className="section-title" style={{ marginBottom: 12 }}>Товары</div>
+            <div className="prod-row" style={{ marginBottom: 6, gridTemplateColumns: isAdmin ? '1fr 60px 90px 60px 60px 90px 32px' : '1fr 80px 32px' }}>
+              {(isAdmin
+                ? ['Товар', 'Кол.', 'Себес. ₸', 'Ком.', '₸/шт', 'Лог. итого', '']
+                : ['Товар', 'Кол.', '']
+              ).map((h, i) => (
+                <span key={i} style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                  letterSpacing: '0.05em', color: 'var(--txt3)',
+                  textAlign: i === 0 ? 'left' : 'center' }}>{h}</span>
+              ))}
+            </div>
+            {rows.map(r => (
+              <ProdRow key={r.id} row={r} catalog={catalog} rate={exRate} coeff={coeff} isAdmin={isAdmin}
+                onUpdate={updateRow} onDel={id => setRows(r => r.filter(x => x.id !== id))} />
+            ))}
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <button className="btn" style={{ flex: 1, justifyContent: 'center' }} onClick={addRow}>
+                + Добавить товар
+              </button>
+              <button className="btn" style={{ padding: '0 14px', fontSize: 13 }} onClick={() => setShowTplModal(true)}
+                title="Шаблоны товаров">📋</button>
+            </div>
+          </div>
+        </div>
+
+        {/* Результат */}
+        <div>
+          {/* Трекер плана */}
+          {(() => {
+            const curMonth = new Date().toISOString().slice(0, 7);
+            const g = userGoals.find(x => x.user_id === user.id && x.month === curMonth);
+            const status = g ? calcPlanStatus(+g.goal, history, user.login, curMonth) : null;
+            return status ? <PlanTracker status={status} compact /> : null;
+          })()}
+          <ResultPanel c={calc} />
+          <div style={{ marginTop: 10, marginBottom: 8 }}>
+            <input className="form-input" value={comment} onChange={e => setComment(e.target.value)}
+              placeholder="💬 Комментарий к записи (необязательно)" />
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={save} className={`btn btn-lg btn-full ${saved ? 'btn-success' : 'btn-primary'}`}
+              style={{ flex: 1, transition: 'all 0.2s' }}>
+              {saved ? '✓ Сохранено!' : '💾 Сохранить запись'}
+            </button>
+            <button className="btn btn-lg" style={{ padding: '0 16px', flexShrink: 0 }}
+              title="Копировать результат"
+              onClick={() => {
+                const txt = [
+                  `📅 ${date}  📦 ${cabinet}`,
+                  `Выручка:  ${fmt(calc.rev)} ₸`,
+                  `Реклама:  ${fmt(calc.ads)} ₸`,
+                  `Прибыль:  ${fmt(calc.profit)} ₸`,
+                  `Маржа:    ${fmtP(calc.margin)}%`,
+                  `ДРР:      ${fmtP(calc.drr)}%`,
+                ].join('\n');
+                navigator.clipboard.writeText(txt).then(() => alert('Скопировано!'));
+              }}>📋</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   if (!user) return <LoginScreen onLogin={setUser} />;
   if (loading) return (
@@ -2815,7 +4178,7 @@ export default function App() {
               {theme === 'dark' ? '☀️' : '🌙'}
             </button>
             <button className="btn" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setShowPwdModal(true)}>🔑</button>
-            <button className="logout-btn" onClick={() => { localStorage.removeItem('wb_user'); setUser(null); setRows([]); setAppTab('calc'); }}>Выйти</button>
+            <button className="logout-btn" onClick={() => { localStorage.removeItem('wb_user'); setUser(null); setRows([]); setAppTab('dashboard'); }}>Выйти</button>
           </div>
         </div>
       </header>
@@ -2825,181 +4188,17 @@ export default function App() {
 
       <div className="app-content">
 
-        {/* ── Калькулятор ── */}
-        {appTab === 'calc' && (
+        {/* ── Дашборд ── */}
+        {appTab === 'dashboard' && (
           <div className="fade-in">
-            {/* Баннер — сегодня не заполнено */}
-            {todayBanner && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14,
-                background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)',
-                borderRadius: 10, padding: '10px 16px' }}>
-                <span style={{ fontSize: 18 }}>⏰</span>
-                <span style={{ fontSize: 13, color: 'var(--yellow-txt)', flex: 1 }}>Сегодня ещё нет записи — не забудь заполнить статистику</span>
-                <button className="btn" style={{ fontSize: 11, padding: '3px 10px' }} onClick={() => setTodayBanner(false)}>✕</button>
-              </div>
-            )}
-            {/* Курс + Настройки */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-              <div className="rate-bar">
-                <span style={{ fontSize: 12, color: 'var(--txt3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Курс НБК</span>
-                {rateStatus === 'loading' && (
-                  <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', color: 'var(--blue-txt)' }}>⟳</span>
-                )}
-                {rateStatus === 'ok' && !editRate && (
-                  <>
-                    <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--green-txt)' }}>1 ₽ = {exRate.toFixed(3)} ₸</span>
-                    <span className="badge badge-green" style={{ fontSize: 10 }}>{rateDate}</span>
-                  </>
-                )}
-                {rateStatus === 'error' && <span style={{ fontSize: 12, color: 'var(--red-txt)' }}>Не удалось загрузить</span>}
-                {editRate ? (
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <input type="number" value={editVal} step="0.001" className="form-input" style={{ width: 90, fontSize: 13 }}
-                      onChange={e => setEditVal(e.target.value)} />
-                    <button className="btn btn-primary" style={{ padding: '5px 12px' }} onClick={() => {
-                      const v = parseFloat(editVal); if (v > 0) { setExRate(v); setRateDate('вручную'); } setEditRate(false);
-                    }}>OK</button>
-                  </div>
-                ) : (
-                  <button className="btn" style={{ fontSize: 11, padding: '3px 10px' }} onClick={() => setEditRate(true)}>Изменить</button>
-                )}
-                <button className="btn" style={{ marginLeft: 'auto', fontSize: 11, opacity: rateStatus === 'loading' ? 0.5 : 1 }}
-                  disabled={rateStatus === 'loading'} onClick={fetchRate}>⟳ Обновить</button>
-              </div>
-
-              {isAdmin ? (
-                <div className="card" style={{ padding: '10px 16px', display: 'flex', gap: 20, alignItems: 'center' }}>
-                  {[{ l: 'Коэф. склада', v: coeff, s: setCoeff, min: 1, max: 5, step: 0.05 },
-                    { l: 'Выкуп, %', v: retRate, s: setRet, min: 0, max: 100, step: 1 }].map(x => (
-                    <div key={x.l} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 12, color: 'var(--txt2)', whiteSpace: 'nowrap' }}>{x.l}</span>
-                      <input type="number" value={x.v} min={x.min} max={x.max} step={x.step}
-                        className="form-input" style={{ width: 72 }}
-                        onChange={e => x.s(parseFloat(e.target.value) || 0)} />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="card" style={{ padding: '10px 16px', display: 'flex', gap: 16, alignItems: 'center' }}>
-                  <span style={{ fontSize: 12, color: 'var(--txt3)' }}>Коэф. склада:</span>
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>{coeff}</span>
-                  <span style={{ fontSize: 12, color: 'var(--txt3)', marginLeft: 8 }}>Выкуп:</span>
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>{retRate}%</span>
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-              {/* Форма */}
-              <div>
-                <div className="card" style={{ padding: '20px 24px', marginBottom: 12 }}>
-                  <div className="section-title" style={{ marginBottom: 16 }}>Основные данные</div>
-                  <div className="form-grid-2" style={{ marginBottom: 12 }}>
-                    <div>
-                      <label className="form-label">Дата</label>
-                      <input type="date" value={date} onChange={e => setDate(e.target.value)} className="form-input" />
-                    </div>
-                    <div>
-                      <label className="form-label">Кабинет</label>
-                      <select value={cabinet} className="form-input" onChange={e => {
-                        const name = e.target.value;
-                        setCab(name);
-                        const cab = (isAdmin ? allCabs : cabs).find(c => c.name === name);
-                        if (cab?.buyout) setRet(+cab.buyout);
-                      }}>
-                        {cabs.map(c => <option key={c.id}>{c.name}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                  <div className="form-grid-2">
-                    <div>
-                      <label className="form-label">Выручка, ₸</label>
-                      <input type="number" value={revenue} placeholder="0"
-                        onChange={e => setRev(e.target.value)} className="form-input" />
-                    </div>
-                    <div>
-                      <label className="form-label">
-                        Реклама, ₽
-                        {num(adsRub) > 0 && (
-                          <span style={{ marginLeft: 6, color: 'var(--yellow-txt)', fontWeight: 400 }}>
-                            = {fmt(adsKzt)} ₸
-                          </span>
-                        )}
-                      </label>
-                      <input type="number" value={adsRub} placeholder="0 ₽"
-                        onChange={e => setAdsRub(e.target.value)} className="form-input" />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="card" style={{ padding: '20px 24px' }}>
-                  <div className="section-title" style={{ marginBottom: 12 }}>Товары</div>
-                  <div className="prod-row" style={{ marginBottom: 6, gridTemplateColumns: isAdmin ? '1fr 60px 90px 60px 60px 90px 32px' : '1fr 80px 32px' }}>
-                    {(isAdmin
-                      ? ['Товар', 'Кол.', 'Себес. ₸', 'Ком.', '₸/шт', 'Лог. итого', '']
-                      : ['Товар', 'Кол.', '']
-                    ).map((h, i) => (
-                      <span key={i} style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
-                        letterSpacing: '0.05em', color: 'var(--txt3)',
-                        textAlign: i === 0 ? 'left' : 'center' }}>{h}</span>
-                    ))}
-                  </div>
-                  {rows.map(r => (
-                    <ProdRow key={r.id} row={r} catalog={catalog} rate={exRate} coeff={coeff} isAdmin={isAdmin}
-                      onUpdate={updateRow} onDel={id => setRows(r => r.filter(x => x.id !== id))} />
-                  ))}
-                  <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                    <button className="btn" style={{ flex: 1, justifyContent: 'center' }} onClick={addRow}>
-                      + Добавить товар
-                    </button>
-                    <button className="btn" style={{ padding: '0 14px', fontSize: 13 }} onClick={() => setShowTplModal(true)}
-                      title="Шаблоны товаров">📋</button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Результат */}
-              <div>
-                {/* Трекер плана */}
-                {(() => {
-                  const curMonth = new Date().toISOString().slice(0, 7);
-                  const g = userGoals.find(x => x.user_id === user.id && x.month === curMonth);
-                  const status = g ? calcPlanStatus(+g.goal, history, user.login, curMonth) : null;
-                  return status ? <PlanTracker status={status} compact /> : null;
-                })()}
-                <ResultPanel c={calc} />
-                <div style={{ marginTop: 10, marginBottom: 8 }}>
-                  <input className="form-input" value={comment} onChange={e => setComment(e.target.value)}
-                    placeholder="💬 Комментарий к записи (необязательно)" />
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={save} className={`btn btn-lg btn-full ${saved ? 'btn-success' : 'btn-primary'}`}
-                    style={{ flex: 1, transition: 'all 0.2s' }}>
-                    {saved ? '✓ Сохранено!' : '💾 Сохранить запись'}
-                  </button>
-                  <button className="btn btn-lg" style={{ padding: '0 16px', flexShrink: 0 }}
-                    title="Копировать результат"
-                    onClick={() => {
-                      const txt = [
-                        `📅 ${date}  📦 ${cabinet}`,
-                        `Выручка:  ${fmt(calc.rev)} ₸`,
-                        `Реклама:  ${fmt(calc.ads)} ₸`,
-                        `Прибыль:  ${fmt(calc.profit)} ₸`,
-                        `Маржа:    ${fmtP(calc.margin)}%`,
-                        `ДРР:      ${fmtP(calc.drr)}%`,
-                      ].join('\n');
-                      navigator.clipboard.writeText(txt).then(() => alert('Скопировано!'));
-                    }}>📋</button>
-                </div>
-              </div>
-            </div>
+            <AutoDashboard user={user} />
           </div>
         )}
 
         {appTab === 'history' && (
           <HistoryPanel
             history={history} setHist={setHist} users={users} cabs={cabs}
-            isAdmin={isAdmin} userLogin={user.login}
+            isAdmin={isAdmin} userLogin={user.login} deductionPct={deductionPct}
             onDelete={async id => { await api.deleteRecord(id); setHist(h => h.filter(r => r.id !== id)); }}
             onClear={async () => { await api.clearHistory(); setHist([]); }}
           />
@@ -3022,11 +4221,19 @@ export default function App() {
           <ProductsPanel histItems={histItems} />
         )}
 
+        {appTab === 'managers_report' && (
+          <ManagersReportPanel />
+        )}
+
+        {appTab === 'summaries' && (
+          <SummariesPanel allCabs={allCabs} />
+        )}
+
         {appTab === 'admin' && isAdmin && (
           <AdminPanel catalog={catalog} setCatalog={setCatalog}
             cabs={allCabs} setCabs={cab => { setAllCabs(cab); setCabs(cab); }}
             users={users} setUsers={setUsers} allCabs={allCabs}
-            userGoals={userGoals} setUserGoals={setUserGoals} history={history} />
+            userGoals={userGoals} setUserGoals={setUserGoals} history={history} coeff={coeff} />
         )}
       </div>
     </div>

@@ -57,6 +57,29 @@ pool.query(`CREATE TABLE IF NOT EXISTS user_goals (
   PRIMARY KEY (user_id, month)
 )`).catch(e => console.error('user_goals init error:', e.message));
 
+pool.query(`CREATE TABLE IF NOT EXISTS wb_advert_stats (
+  id SERIAL PRIMARY KEY,
+  cab_id INTEGER REFERENCES cabs(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  campaign_id BIGINT NOT NULL,
+  campaign_name TEXT,
+  campaign_type INTEGER,
+  status INTEGER,
+  date DATE NOT NULL,
+  views INTEGER DEFAULT 0,
+  clicks INTEGER DEFAULT 0,
+  ctr NUMERIC DEFAULT 0,
+  cpc NUMERIC DEFAULT 0,
+  sum NUMERIC DEFAULT 0,
+  atbs INTEGER DEFAULT 0,
+  orders INTEGER DEFAULT 0,
+  cr NUMERIC DEFAULT 0,
+  shks INTEGER DEFAULT 0,
+  sum_price NUMERIC DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(cab_id, campaign_id, date)
+)`).catch(e => console.error('wb_advert_stats init error:', e.message));
+
 // ── Курс RUB/KZT ─────────────────────────────────────────────────────────────
 app.get('/api/rate', async (_req, res) => {
   try {
@@ -236,14 +259,14 @@ app.get('/api/history', async (_req, res) => {
 });
 
 app.post('/api/history', async (req, res) => {
-  const { date, cabinet, user_login, user_id, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment, items } = req.body;
+  const { date, cabinet, user_login, user_id, rev, ads, cost, comm, cab_comm, log_f, log_r, ret, profit, margin, drr, comment, items } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `INSERT INTO history (date,cabinet,user_login,user_id,rev,ads,cost,comm,log_f,log_r,ret,profit,margin,drr,comment)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-      [date, cabinet, user_login, user_id || null, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment||'']
+      `INSERT INTO history (date,cabinet,user_login,user_id,rev,ads,cost,comm,cab_comm,log_f,log_r,ret,profit,margin,drr,comment)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+      [date, cabinet, user_login, user_id || null, rev, ads, cost, comm, cab_comm||0, log_f, log_r, ret, profit, margin, drr, comment||'']
     );
     const histId = rows[0].id;
     if (Array.isArray(items)) {
@@ -276,10 +299,10 @@ app.get('/api/history-items', async (_req, res) => {
 });
 
 app.put('/api/history/:id', async (req, res) => {
-  const { date, cabinet, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment } = req.body;
+  const { date, cabinet, rev, ads, cost, comm, cab_comm, log_f, log_r, ret, profit, margin, drr, comment } = req.body;
   const { rows } = await pool.query(
-    `UPDATE history SET date=$1,cabinet=$2,rev=$3,ads=$4,cost=$5,comm=$6,log_f=$7,log_r=$8,ret=$9,profit=$10,margin=$11,drr=$12,comment=$13 WHERE id=$14 RETURNING *`,
-    [date, cabinet, rev, ads, cost, comm, log_f, log_r, ret, profit, margin, drr, comment||'', req.params.id]
+    `UPDATE history SET date=$1,cabinet=$2,rev=$3,ads=$4,cost=$5,comm=$6,cab_comm=$7,log_f=$8,log_r=$9,ret=$10,profit=$11,margin=$12,drr=$13,comment=$14 WHERE id=$15 RETURNING *`,
+    [date, cabinet, rev, ads, cost, comm, cab_comm||0, log_f, log_r, ret, profit, margin, drr, comment||'', req.params.id]
   );
   res.json(rows[0]);
 });
@@ -373,5 +396,389 @@ app.put('/api/user-goals/:userId/:month', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Дашборд и отчёты ────────────────────────────────────────────────────────
+function parseDateRange(req) {
+  let { dateFrom, dateTo } = req.query;
+  if (!dateFrom || !dateTo) {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - 6);
+    dateTo = to.toISOString().split('T')[0];
+    dateFrom = from.toISOString().split('T')[0];
+  }
+  return { dateFrom, dateTo };
+}
+
+async function getFinanceCosts(dateFrom, dateTo, cabId) {
+  const p = [dateFrom, dateTo];
+  let f = '';
+  if (cabId && cabId !== 'all') { p.push(parseInt(cabId)); f = `AND fr.cab_id=$${p.length}`; }
+  const { rows } = await pool.query(
+    `SELECT fr.cab_id, fr.date_from, fr.date_to,
+            SUM(fr.retail_amount)::float AS retail,
+            SUM(fr.delivery_service)::float AS dlv, SUM(fr.paid_storage)::float AS st,
+            SUM(fr.paid_acceptance)::float AS accept, SUM(fr.penalty)::float AS pen,
+            SUM(fr.deduction)::float AS ded
+     FROM wb_finance_reports fr
+     WHERE fr.date_from <= $2 AND fr.date_to >= $1 ${f}
+     GROUP BY fr.cab_id, fr.date_from, fr.date_to`, p);
+  return rows;
+}
+
+function applyFinanceToRows(rows, fnRows) {
+  if (!fnRows || !fnRows.length || !rows.length) return;
+  const totals = { retail: 0, dlv: 0, st: 0, accept: 0, pen: 0, ded: 0 };
+  fnRows.forEach(f => { totals.retail += +f.retail; totals.dlv += +f.dlv; totals.st += +f.st; totals.accept += +f.accept; totals.pen += +f.pen; totals.ded += +f.ded; });
+  const totalRev = rows.reduce((s, r) => s + (+r.rev || 0), 0);
+  if (totalRev <= 0) return;
+  rows.forEach(row => {
+    const share = (+row.rev || 0) / totalRev;
+    if (share <= 0) return;
+    // Always scale rev to match finance report retail_amount
+    if (totals.retail > 0) {
+      row.rev = +((+row.rev || 0) * totals.retail / totalRev).toFixed(2);
+    }
+    // Set finance costs (log_f/storage/etc.) and adjust profit — this runs when
+    // applyFinanceExpenses has NOT already updated wb_sales (e.g. API-only path)
+    row.log_f = +((+row.log_f || 0) + totals.dlv * share).toFixed(2);
+    row.storage = +((+row.storage || 0) + totals.st * share).toFixed(2);
+    row.acceptance = +((+row.acceptance || 0) + totals.accept * share).toFixed(2);
+    row.penalties = +((+row.penalties || 0) + totals.pen * share).toFixed(2);
+    row.other_deductions = +((+row.other_deductions || 0) + totals.ded * share).toFixed(2);
+    const extra = (parseFloat(row.storage)||0) + (parseFloat(row.penalties)||0) + (parseFloat(row.other_deductions)||0) + (parseFloat(row.acceptance)||0);
+    row.profit = +((+row.profit || 0) - extra).toFixed(2);
+  });
+}
+
+app.get('/api/settings', async (_req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT key, value FROM app_settings');
+    res.json(Object.fromEntries(rows.map(r => [r.key, r.value])));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/settings', async (req, res) => {
+  try {
+    const { buyout_days, deduction_pct } = req.body;
+    if (buyout_days !== undefined) {
+      await pool.query(`INSERT INTO app_settings (key, value) VALUES ('buyout_days', $1) ON CONFLICT (key) DO UPDATE SET value=$1`, [String(buyout_days)]);
+    }
+    if (deduction_pct !== undefined) {
+      await pool.query(`INSERT INTO app_settings (key, value) VALUES ('deduction_pct', $1) ON CONFLICT (key) DO UPDATE SET value=$1`, [String(deduction_pct)]);
+    }
+    const { rows } = await pool.query('SELECT key, value FROM app_settings');
+    res.json(Object.fromEntries(rows.map(r => [r.key, r.value])));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/dashboard', async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = parseDateRange(req);
+    const userId = req.query.userId ? parseInt(req.query.userId, 10) : null;
+    let cabFilter = '', params = [dateFrom, dateTo];
+    let finCabFilter = '', finP = [dateFrom, dateTo], isAdminFilter = true;
+    if (userId) {
+      const { rows: u } = await pool.query('SELECT role FROM users WHERE id=$1', [userId]);
+      if (u.length && u[0].role !== 'admin') {
+        cabFilter = 'AND a.cab_id IN (SELECT cab_id FROM user_cabs WHERE user_id=$3)';
+        finCabFilter = 'AND fr.cab_id IN (SELECT cab_id FROM user_cabs WHERE user_id=$3)';
+        params.push(userId);
+        finP.push(userId);
+        isAdminFilter = false;
+      }
+    }
+    // Revenue from finance reports (100% match with WB Partners)
+    const { rows: finRows } = await pool.query(
+      `SELECT COALESCE(SUM(fr.retail_amount)::float,0) AS rev,
+              COALESCE(SUM(fr.for_pay)::float,0) AS for_pay,
+              COALESCE(SUM(fr.delivery_service)::float,0) AS dlv,
+              COALESCE(SUM(fr.paid_storage)::float,0) AS sto,
+              COALESCE(SUM(fr.paid_acceptance)::float,0) AS acc,
+              COALESCE(SUM(fr.deduction)::float,0) AS ded,
+              COALESCE(SUM(fr.penalty)::float,0) AS pen,
+              MIN(fr.date_from)::text AS actual_from,
+              MAX(fr.date_to)::text AS actual_to
+       FROM wb_finance_reports fr
+       WHERE fr.date_to >= $1 AND fr.date_from <= $2 ${finCabFilter}`, finP);
+    const f = finRows[0];
+    
+    // Ads, cost, comm from wb_sales + advert_stats (these are independent of rev source)
+    const { rows: exp } = await pool.query(
+      `SELECT COALESCE(SUM(a.sum)::float,0) AS ads
+       FROM wb_advert_stats a WHERE a.date BETWEEN $1 AND $2 ${cabFilter}`, params);
+    const ads = exp[0].ads;
+    
+    const { rows: costRows } = await pool.query(
+      `SELECT COALESCE(SUM(ws.cost)::float,0) AS cost, COUNT(*)::int AS days
+       FROM wb_sales ws WHERE ws.date BETWEEN $1 AND $2 ${cabFilter.replace(/a\./g,'ws.')}`, params);
+    
+    const rev = f.rev;
+    const forPay = f.for_pay;
+    const logistics = f.dlv + f.sto + f.acc + f.ded + f.pen;
+    const cost = costRows[0].cost;
+    const pct = parseFloat((await pool.query("SELECT value FROM app_settings WHERE key='deduction_pct'")).rows[0]?.value||0);
+    const dedAmount = rev * pct / 100;
+    const profit = forPay - cost - ads - dedAmount;
+    const netRev = rev;
+    const margin = netRev > 0 ? +(profit / netRev * 100).toFixed(2) : 0;
+    const drr = netRev > 0 ? +(ads / netRev * 100).toFixed(2) : 0;
+    
+    const expenses = cost + ads + logistics + dedAmount;
+    
+    // Per-cabinet breakdown from finance reports + ads + cost
+    const { rows: byCab } = await pool.query(
+      `SELECT f.cab_id, c.name AS cab_name, c.cab_type,
+              f.rev, f.for_pay, f.logistics,
+              COALESCE(a.ads::float,0) AS ads,
+              COALESCE(s.cost::float,0) AS cost
+       FROM (SELECT fr.cab_id,
+                    SUM(fr.retail_amount)::float AS rev,
+                    SUM(fr.for_pay)::float AS for_pay,
+                    SUM(fr.delivery_service+fr.paid_storage+fr.paid_acceptance+fr.deduction+fr.penalty)::float AS logistics
+             FROM wb_finance_reports fr
+             WHERE fr.date_to >= $1 AND fr.date_from <= $2 ${finCabFilter}
+             GROUP BY fr.cab_id) f
+       JOIN cabs c ON c.id = f.cab_id
+       LEFT JOIN (SELECT cab_id, SUM(sum)::float AS ads FROM wb_advert_stats WHERE date BETWEEN $1 AND $2 ${cabFilter} GROUP BY cab_id) a ON a.cab_id = f.cab_id
+       LEFT JOIN (SELECT cab_id, SUM(cost)::float AS cost FROM wb_sales WHERE date BETWEEN $1 AND $2 ${cabFilter.replace(/a\./g,'ws.')} GROUP BY cab_id) s ON s.cab_id = f.cab_id
+       ORDER BY f.rev DESC`, finP);
+    
+    for (const r of byCab) {
+      const ded = (r.rev || 0) * pct / 100;
+      r.comm = +(r.logistics || 0).toFixed(2);
+      r.logistics = +(r.logistics || 0).toFixed(2);
+      r.deduction = +ded.toFixed(2);
+      r.profit = +(r.for_pay - (r.cost||0) - (r.ads||0) - ded).toFixed(2);
+      r.expenses = +((r.cost||0) + (r.ads||0) + (r.logistics||0) + ded).toFixed(2);
+      const nr = r.rev || 0;
+      r.margin = nr > 0 ? +(r.profit / nr * 100).toFixed(2) : 0;
+      r.drr = nr > 0 ? +((r.ads||0) / nr * 100).toFixed(2) : 0;
+    }
+    
+    res.json({
+      period: { dateFrom, dateTo, actualFrom: f.actual_from || dateFrom, actualTo: f.actual_to || dateTo },
+      totals: {
+        rev, for_pay: +forPay.toFixed(2),
+        cost: +cost.toFixed(2), ads: +ads.toFixed(2),
+        comm: +logistics.toFixed(2), // all WB fees combined
+        logistics: +logistics.toFixed(2),
+        deduction: +dedAmount.toFixed(2),
+        profit: +profit.toFixed(2), expenses: +expenses.toFixed(2),
+        margin, drr,
+        qty: costRows[0].days
+      },
+      byCab
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/reports/daily', async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = parseDateRange(req);
+    const cabId = req.query.cabId;
+    const params = [dateFrom, dateTo];
+    let cabF = '', cabF2 = '';
+    if (cabId && cabId !== 'all') { params.push(parseInt(cabId)); cabF = 'AND d.cab_id=$3'; cabF2 = 'AND ws.cab_id=$3'; }
+    const { rows } = await pool.query(`WITH q AS (
+      SELECT DISTINCT ON (d.cab_id,d.date,d.article) d.cab_id,d.date,d.article,d.qty
+      FROM wb_manager_sales_detail d WHERE d.date BETWEEN $1 AND $2 ${cabF} AND BTRIM(d.article)<>''
+        AND (COALESCE(d.rev,0)<>0 OR COALESCE(d.cost,0)<>0 OR COALESCE(d.comm,0)<>0 OR COALESCE(d.ads,0)<>0 OR COALESCE(d.profit,0)<>0)
+      ORDER BY d.cab_id,d.date,d.article,(d.user_id IS NULL),d.updated_at DESC,d.id DESC
+    ), q2 AS (SELECT cab_id,date,SUM(qty) AS qty FROM q GROUP BY cab_id,date),
+    s AS (SELECT ws.cab_id,ws.date,SUM(ws.rev)AS rev,SUM(ws.cost)AS cost,SUM(ws.comm)AS comm,SUM(ws.ads)AS ads,
+      SUM(ws.cab_comm)AS cab_comm,SUM(ws.log_f)AS log_f,SUM(ws.log_r)AS log_r,
+      SUM(CASE WHEN COALESCE(ws.ret,0)<>0 THEN ws.ret ELSE GREATEST(ws.rev-ws.profit-ws.cost-ws.ads-ws.comm-ws.cab_comm-ws.log_f-ws.log_r,0) END)AS ret,
+      SUM(ws.profit)AS profit FROM wb_sales ws WHERE ws.date BETWEEN $1 AND $2 ${cabF2} GROUP BY cab_id,date)
+    SELECT TO_CHAR(s.date,'YYYY-MM-DD') AS date,COALESCE(SUM(q2.qty),0)::float AS qty,
+      SUM(s.rev)::float AS rev,SUM(s.cost)::float AS cost,SUM(s.comm)::float AS comm,SUM(s.ads)::float AS ads,
+      SUM(s.cab_comm)::float AS cab_comm,SUM(s.log_f)::float AS log_f,SUM(s.log_r)::float AS log_r,SUM(s.ret)::float AS ret,SUM(s.profit)::float AS profit
+    FROM s LEFT JOIN q2 ON q2.cab_id=s.cab_id AND q2.date=s.date GROUP BY s.date ORDER BY s.date`, params);
+    const fnRows = await getFinanceCosts(dateFrom, dateTo, req.query.cabId);
+    applyFinanceToRows(rows, fnRows);
+    const ded = parseFloat((await pool.query(`SELECT value FROM app_settings WHERE key='deduction_pct'`)).rows[0]?.value||0);
+    rows.forEach(r => { const nr = (+r.rev||0)-(+r.ret||0); const d = nr*ded/100; r.profit = +((+r.profit||0)-d).toFixed(2); r.margin = nr>0 ? +(+r.profit/nr*100).toFixed(2) : 0; r.drr = nr>0 ? +(+r.ads/nr*100).toFixed(2) : 0; });
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/reports/monthly', async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = parseDateRange(req);
+    const cabId = req.query.cabId;
+    const params = [dateFrom, dateTo];
+    let f = ''; if (cabId && cabId !== 'all') { params.push(parseInt(cabId)); f = 'AND d.cab_id=$3'; }
+    let f2 = ''; if (cabId && cabId !== 'all') { f2 = 'AND ws.cab_id=$3'; }
+    const { rows } = await pool.query(`WITH q AS (
+      SELECT DISTINCT ON (d.cab_id,d.date,d.article) d.cab_id,d.date,d.article,d.qty
+      FROM wb_manager_sales_detail d WHERE d.date BETWEEN $1 AND $2 ${f} AND BTRIM(d.article)<>''
+        AND (COALESCE(d.rev,0)<>0 OR COALESCE(d.cost,0)<>0 OR COALESCE(d.comm,0)<>0 OR COALESCE(d.ads,0)<>0 OR COALESCE(d.profit,0)<>0)
+      ORDER BY d.cab_id,d.date,d.article,(d.user_id IS NULL),d.updated_at DESC,d.id DESC
+    ), q2 AS (SELECT cab_id,date,SUM(qty) AS qty FROM q GROUP BY cab_id,date),
+    s AS (SELECT ws.cab_id,ws.date,SUM(ws.rev)AS rev,SUM(ws.cost)AS cost,SUM(ws.comm)AS comm,SUM(ws.ads)AS ads,
+      SUM(ws.cab_comm)AS cab_comm,SUM(ws.log_f)AS log_f,SUM(ws.log_r)AS log_r,
+      SUM(CASE WHEN COALESCE(ws.ret,0)<>0 THEN ws.ret ELSE GREATEST(ws.rev-ws.profit-ws.cost-ws.ads-ws.comm-ws.cab_comm-ws.log_f-ws.log_r,0) END)AS ret,
+      SUM(ws.profit)AS profit FROM wb_sales ws WHERE ws.date BETWEEN $1 AND $2 ${f2} GROUP BY cab_id,date)
+    SELECT TO_CHAR(s.date,'YYYY-MM') AS month,COALESCE(SUM(q2.qty),0)::float AS qty,
+      SUM(s.rev)::float AS rev,SUM(s.cost)::float AS cost,SUM(s.comm)::float AS comm,SUM(s.ads)::float AS ads,
+      SUM(s.cab_comm)::float AS cab_comm,SUM(s.log_f)::float AS log_f,SUM(s.log_r)::float AS log_r,SUM(s.ret)::float AS ret,SUM(s.profit)::float AS profit
+    FROM s LEFT JOIN q2 ON q2.cab_id=s.cab_id AND q2.date=s.date GROUP BY TO_CHAR(s.date,'YYYY-MM') ORDER BY month`, params);
+    const fnRows = await getFinanceCosts(dateFrom, dateTo, req.query.cabId);
+    applyFinanceToRows(rows, fnRows);
+    const ded = parseFloat((await pool.query(`SELECT value FROM app_settings WHERE key='deduction_pct'`)).rows[0]?.value||0);
+    rows.forEach(r => { const nr = (+r.rev||0)-(+r.ret||0); const d = nr*ded/100; r.profit = +((+r.profit||0)-d).toFixed(2); r.margin = nr>0 ? +(+r.profit/nr*100).toFixed(2) : 0; r.drr = nr>0 ? +(+r.ads/nr*100).toFixed(2) : 0; });
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/reports/category', async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = parseDateRange(req);
+    const cabId = req.query.cabId;
+    const params = [dateFrom, dateTo];
+    let f = ''; if (cabId && cabId !== 'all') { params.push(parseInt(cabId)); f = 'AND d.cab_id=$3'; }
+    const { rows } = await pool.query(`WITH q AS (
+      SELECT DISTINCT ON (d.cab_id,d.date,d.article) d.cab_id,d.date,d.article,d.subject,d.qty,d.rev,d.cost,d.comm
+      FROM wb_manager_sales_detail d WHERE d.date BETWEEN $1 AND $2 ${f} AND BTRIM(d.article)<>''
+        AND (COALESCE(d.rev,0)<>0 OR COALESCE(d.cost,0)<>0 OR COALESCE(d.comm,0)<>0 OR COALESCE(d.ads,0)<>0 OR COALESCE(d.profit,0)<>0)
+      ORDER BY d.cab_id,d.date,d.article,(d.user_id IS NULL),d.updated_at DESC,d.id DESC
+    ), c2 AS (SELECT c.id,c.subject,c.article FROM catalog c WHERE c.article IS NOT NULL),
+    f2 AS (SELECT q.cab_id,q.date,q.qty,q.rev,q.cost,q.comm,COALESCE(c2.subject,q.subject) AS category
+      FROM q LEFT JOIN c2 ON c2.article=q.article),
+    cr AS (SELECT f2.cab_id,SUM(f2.rev)AS rev FROM f2 GROUP BY f2.cab_id),
+    s AS (SELECT ws.cab_id,SUM(ws.ads)AS ads,SUM(ws.cab_comm)AS cab,SUM(ws.log_f)AS lf,SUM(ws.log_r)AS lr,
+      SUM(CASE WHEN COALESCE(ws.ret,0)<>0 THEN ws.ret ELSE GREATEST(ws.rev-ws.profit-ws.cost-ws.ads-ws.comm-ws.cab_comm-ws.log_f-ws.log_r,0) END)AS ret,
+      SUM(ws.profit)AS profit FROM wb_sales ws WHERE ws.date BETWEEN $1 AND $2 ${f.replace(/d\./g,'ws.')} GROUP BY ws.cab_id)
+    SELECT f2.category,SUM(f2.qty)::float AS qty,SUM(f2.rev)::float AS rev,SUM(f2.cost)::float AS cost,SUM(f2.comm)::float AS comm,
+      SUM(CASE WHEN cr.rev>0 THEN f2.rev/cr.rev*COALESCE(s.ads,0) ELSE 0 END)::float AS ads,
+      SUM(CASE WHEN cr.rev>0 THEN f2.rev/cr.rev*COALESCE(s.cab,0) ELSE 0 END)::float AS cab_comm,
+      SUM(CASE WHEN cr.rev>0 THEN f2.rev/cr.rev*COALESCE(s.lf,0) ELSE 0 END)::float AS log_f,
+      SUM(CASE WHEN cr.rev>0 THEN f2.rev/cr.rev*COALESCE(s.lr,0) ELSE 0 END)::float AS log_r,
+      SUM(CASE WHEN cr.rev>0 THEN f2.rev/cr.rev*COALESCE(s.ret,0) ELSE 0 END)::float AS ret,
+      SUM(CASE WHEN cr.rev>0 THEN f2.rev/cr.rev*COALESCE(s.profit,0) ELSE 0 END)::float AS profit
+    FROM f2 JOIN cr ON cr.cab_id=f2.cab_id LEFT JOIN s ON s.cab_id=f2.cab_id GROUP BY f2.category ORDER BY SUM(f2.rev) DESC`, params);
+    const fnRows = await getFinanceCosts(dateFrom, dateTo, req.query.cabId);
+    applyFinanceToRows(rows, fnRows);
+    const ded = parseFloat((await pool.query(`SELECT value FROM app_settings WHERE key='deduction_pct'`)).rows[0]?.value||0);
+    rows.forEach(r => { const nr = (+r.rev||0)-(+r.ret||0); const d = nr*ded/100; r.profit = +((+r.profit||0)-d).toFixed(2); r.margin = nr>0 ? +(+r.profit/nr*100).toFixed(2) : 0; r.drr = nr>0 ? +(+r.ads/nr*100).toFixed(2) : 0; });
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/reports/article', async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = parseDateRange(req);
+    const cabId = req.query.cabId;
+    const params = [dateFrom, dateTo];
+    let f = ''; if (cabId && cabId !== 'all') { params.push(parseInt(cabId)); f = 'AND d.cab_id=$3'; }
+    let f2 = ''; if (cabId && cabId !== 'all') { f2 = 'AND ws.cab_id=$3'; }
+    const { rows } = await pool.query(`WITH q AS (
+      SELECT DISTINCT ON (d.cab_id,d.date,d.article) d.cab_id,d.date,d.article,d.subject,d.qty,d.rev,d.cost,d.comm
+      FROM wb_manager_sales_detail d WHERE d.date BETWEEN $1 AND $2 ${f} AND BTRIM(d.article)<>''
+        AND (COALESCE(d.rev,0)<>0 OR COALESCE(d.cost,0)<>0 OR COALESCE(d.comm,0)<>0 OR COALESCE(d.ads,0)<>0 OR COALESCE(d.profit,0)<>0)
+      ORDER BY d.cab_id,d.date,d.article,(d.user_id IS NULL),d.updated_at DESC,d.id DESC
+    ), s AS (SELECT ws.cab_id,SUM(ws.ads)AS ads,SUM(ws.cab_comm)AS cab,SUM(ws.log_f)AS lf,SUM(ws.log_r)AS lr,
+      SUM(CASE WHEN COALESCE(ws.ret,0)<>0 THEN ws.ret ELSE GREATEST(ws.rev-ws.profit-ws.cost-ws.ads-ws.comm-ws.cab_comm-ws.log_f-ws.log_r,0) END)AS ret,
+      SUM(ws.profit)AS profit FROM wb_sales ws WHERE ws.date BETWEEN $1 AND $2 ${f2} GROUP BY ws.cab_id),
+    tot AS (SELECT q.cab_id,SUM(q.rev)AS rev FROM q GROUP BY q.cab_id),
+    r AS (SELECT q.article,q.subject,SUM(q.qty)AS qty,SUM(q.rev)AS rev,SUM(q.cost)AS cost,SUM(q.comm)AS comm,q.cab_id
+      FROM q GROUP BY q.article,q.subject,q.cab_id)
+    SELECT r.article,MIN(r.subject)AS subject,SUM(r.qty)::float AS qty,SUM(r.rev)::float AS rev,SUM(r.cost)::float AS cost,
+      SUM(r.comm)::float AS comm,
+      SUM(CASE WHEN tot.rev>0 THEN r.rev/tot.rev*COALESCE(s.ads,0) ELSE 0 END)::float AS ads,
+      SUM(CASE WHEN tot.rev>0 THEN r.rev/tot.rev*COALESCE(s.cab,0) ELSE 0 END)::float AS cab_comm,
+      SUM(CASE WHEN tot.rev>0 THEN r.rev/tot.rev*COALESCE(s.lf,0) ELSE 0 END)::float AS log_f,
+      SUM(CASE WHEN tot.rev>0 THEN r.rev/tot.rev*COALESCE(s.lr,0) ELSE 0 END)::float AS log_r,
+      SUM(CASE WHEN tot.rev>0 THEN r.rev/tot.rev*COALESCE(s.ret,0) ELSE 0 END)::float AS ret,
+      SUM(CASE WHEN tot.rev>0 THEN r.rev/tot.rev*COALESCE(s.profit,0) ELSE 0 END)::float AS profit
+    FROM r JOIN tot ON tot.cab_id=r.cab_id LEFT JOIN s ON s.cab_id=r.cab_id
+    GROUP BY r.article ORDER BY SUM(r.rev) DESC LIMIT 1000`, params);
+    const fnRows = await getFinanceCosts(dateFrom, dateTo, req.query.cabId);
+    applyFinanceToRows(rows, fnRows);
+    const ded = parseFloat((await pool.query(`SELECT value FROM app_settings WHERE key='deduction_pct'`)).rows[0]?.value||0);
+    rows.forEach(r => { const nr = (+r.rev||0)-(+r.ret||0); const d = nr*ded/100; r.profit = +((+r.profit||0)-d).toFixed(2); r.margin = nr>0 ? +(+r.profit/nr*100).toFixed(2) : 0; r.drr = nr>0 ? +(+r.ads/nr*100).toFixed(2) : 0; });
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/reports/product', async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = parseDateRange(req);
+    const cabId = req.query.cabId;
+    const params = [dateFrom, dateTo];
+    let f = ''; if (cabId && cabId !== 'all') { params.push(parseInt(cabId)); f = 'AND d.cab_id=$3'; }
+    let f2 = ''; if (cabId && cabId !== 'all') { f2 = 'AND ws.cab_id=$3'; }
+    const { rows } = await pool.query(`WITH q AS (
+      SELECT DISTINCT ON (d.cab_id,d.date,d.article) d.cab_id,d.date,d.article,d.subject,d.qty,d.rev,d.cost,d.comm
+      FROM wb_manager_sales_detail d WHERE d.date BETWEEN $1 AND $2 ${f} AND BTRIM(d.article)<>''
+        AND (COALESCE(d.rev,0)<>0 OR COALESCE(d.cost,0)<>0 OR COALESCE(d.comm,0)<>0 OR COALESCE(d.ads,0)<>0 OR COALESCE(d.profit,0)<>0)
+      ORDER BY d.cab_id,d.date,d.article,(d.user_id IS NULL),d.updated_at DESC,d.id DESC
+    ), c2 AS (SELECT c.id,c.article,c.name,c.subject FROM catalog c WHERE c.article IS NOT NULL),
+    f2a AS (SELECT q.cab_id,q.article,COALESCE(c2.name,q.article) AS product,COALESCE(c2.subject,q.subject) AS subject,q.qty,q.rev,q.cost,q.comm
+      FROM q LEFT JOIN c2 ON c2.article=q.article),
+    s AS (SELECT ws.cab_id,SUM(ws.ads)AS ads,SUM(ws.cab_comm)AS cab,SUM(ws.log_f)AS lf,SUM(ws.log_r)AS lr,
+      SUM(CASE WHEN COALESCE(ws.ret,0)<>0 THEN ws.ret ELSE GREATEST(ws.rev-ws.profit-ws.cost-ws.ads-ws.comm-ws.cab_comm-ws.log_f-ws.log_r,0) END)AS ret,
+      SUM(ws.profit)AS profit FROM wb_sales ws WHERE ws.date BETWEEN $1 AND $2 ${f2} GROUP BY ws.cab_id),
+    cr AS (SELECT f2a.cab_id,SUM(f2a.rev)AS rev FROM f2a GROUP BY f2a.cab_id)
+    SELECT f2a.product,MIN(f2a.subject)AS subject,COUNT(DISTINCT f2a.article)::int AS articles,
+      SUM(f2a.qty)::float AS qty,SUM(f2a.rev)::float AS rev,SUM(f2a.cost)::float AS cost,SUM(f2a.comm)::float AS comm,
+      SUM(CASE WHEN cr.rev>0 THEN f2a.rev/cr.rev*COALESCE(s.ads,0) ELSE 0 END)::float AS ads,
+      SUM(CASE WHEN cr.rev>0 THEN f2a.rev/cr.rev*COALESCE(s.cab,0) ELSE 0 END)::float AS cab_comm,
+      SUM(CASE WHEN cr.rev>0 THEN f2a.rev/cr.rev*COALESCE(s.lf,0) ELSE 0 END)::float AS log_f,
+      SUM(CASE WHEN cr.rev>0 THEN f2a.rev/cr.rev*COALESCE(s.lr,0) ELSE 0 END)::float AS log_r,
+      SUM(CASE WHEN cr.rev>0 THEN f2a.rev/cr.rev*COALESCE(s.ret,0) ELSE 0 END)::float AS ret,
+      SUM(CASE WHEN cr.rev>0 THEN f2a.rev/cr.rev*COALESCE(s.profit,0) ELSE 0 END)::float AS profit
+    FROM f2a JOIN cr ON cr.cab_id=f2a.cab_id LEFT JOIN s ON s.cab_id=f2a.cab_id
+    GROUP BY f2a.product ORDER BY SUM(f2a.rev) DESC`, params);
+    const fnRows = await getFinanceCosts(dateFrom, dateTo, req.query.cabId);
+    applyFinanceToRows(rows, fnRows);
+    const ded = parseFloat((await pool.query(`SELECT value FROM app_settings WHERE key='deduction_pct'`)).rows[0]?.value||0);
+    rows.forEach(r => { const nr = (+r.rev||0)-(+r.ret||0); const d = nr*ded/100; r.profit = +((+r.profit||0)-d).toFixed(2); r.margin = nr>0 ? +(+r.profit/nr*100).toFixed(2) : 0; r.drr = nr>0 ? +(+r.ads/nr*100).toFixed(2) : 0; });
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+const scheduler = require('./scheduler');
+app.use('/api/wb', (function() {
+  const r = require('express').Router();
+  r.get('/scheduler-status', async (_req, res) => {
+    try {
+      const { rows } = await pool.query(`SELECT key,value FROM app_settings WHERE key IN ('scheduler_last_run','scheduler_last_deep_run')`);
+      const s = Object.fromEntries(rows.map(rr => [rr.key, rr.value]));
+      res.json({ ...scheduler.getStatus(), settings: s });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+  r.get('/import-status', async (_req, res) => {
+    try {
+      const { rows } = await pool.query(`SELECT c.id, c.name, r.status, r.issues->0->>'message' AS issue, r.started_at FROM cabs c LEFT JOIN LATERAL (SELECT * FROM wb_import_runs WHERE cab_id=c.id ORDER BY started_at DESC LIMIT 1) r ON true ORDER BY c.id`);
+      res.json(rows);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+  });
+  r.get('/import-runs', async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit)||50, 200);
+      const { rows } = await pool.query(`SELECT r.id,r.cab_id,c.name AS cab_name,r.requested_from::text,r.requested_to::text,r.status,r.attempts,r.fetched_rows,r.accepted_rows,r.rejected_rows,r.issues,r.started_at,r.finished_at FROM wb_import_runs r JOIN cabs c ON c.id=r.cab_id ORDER BY r.started_at DESC LIMIT $1`, [limit]);
+      res.json(rows);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+  });
+  r.get('/order-stats', async (req, res) => {
+    try {
+      const p = [req.query.dateFrom||'2026-01-01', req.query.dateTo||'2099-12-31'];
+      let f = ''; if (req.query.cabId && req.query.cabId!=='all') { p.push(parseInt(req.query.cabId)); f = 'AND os.cab_id=$3'; }
+      const { rows } = await pool.query(`SELECT os.cab_id,c.name AS cab_name,SUM(os.ordered_qty)::int AS ordered_qty,SUM(os.ordered_amount)::float AS ordered_amount,SUM(os.cancelled_qty)::int AS cancelled_qty FROM wb_order_stats os JOIN cabs c ON c.id=os.cab_id WHERE os.date BETWEEN $1 AND $2 ${f} GROUP BY os.cab_id,c.name ORDER BY SUM(os.ordered_amount) DESC`, p);
+      res.json(rows);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+  });
+  r.get('/finance-reports', async (req, res) => {
+    try {
+      const p = [req.query.dateFrom||'2026-01-01', req.query.dateTo||'2099-12-31'];
+      let f = ''; if (req.query.cabId && req.query.cabId!=='all') { p.push(parseInt(req.query.cabId)); f = 'AND fr.cab_id=$3'; }
+      const { rows } = await pool.query(`SELECT fr.cab_id, c.name AS cab_name, SUM(fr.retail_amount)::float AS retail, SUM(fr.for_pay)::float AS pay, SUM(fr.delivery_service)::float AS dlv, SUM(fr.paid_storage)::float AS st, SUM(fr.paid_acceptance)::float AS accept, SUM(fr.penalty)::float AS pen, SUM(fr.deduction)::float AS ded, COUNT(*)::int AS cnt FROM wb_finance_reports fr JOIN cabs c ON c.id=fr.cab_id WHERE fr.date_from <= $2 AND fr.date_to >= $1 ${f} GROUP BY fr.cab_id,c.name ORDER BY SUM(fr.retail_amount) DESC`, p);
+      res.json(rows);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+  });
+  return r;
+})());
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`API сервер запущен на http://localhost:${PORT}`));
+scheduler.start(pool);

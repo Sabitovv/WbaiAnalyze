@@ -8,7 +8,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5433:5432"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sait_user} -d ${POSTGRES_DB:-sait_db}"]
@@ -25,6 +25,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-sait_user}:${POSTGRES_PASSWORD:-sait_pass}@db:5432/${POSTGRES_DB:-sait_db}
       PGSSLMODE: disable
       PORT: 3001
+      WB_TOKENS: ${WB_TOKENS:-[]}
     restart: unless-stopped
 
   frontend:
