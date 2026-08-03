@@ -469,9 +469,9 @@ app.get('/api/users/report-detail', async (req, res) => {
     const { userId, dateFrom, dateTo } = req.query;
     if (!userId) return res.status(400).json({ error: 'userId required' });
     const { rows } = await pool.query(
-      `SELECT d.cab_id, c.name AS cab_name, d.date, d.article, COALESCE(cat.name,d.article) AS product,
-              d.subject, d.qty, d.rev, d.cost, d.comm, d.cab_comm, d.log_f, d.log_r, d.ret,
-              d.ads, d.profit, d.user_id
+       `SELECT d.cab_id, c.name AS cab_name, d.date, d.article, COALESCE(cat.name,d.article) AS product,
+               d.subject, d.qty, d.rev, d.cost, d.comm,
+               d.ads, d.profit, d.user_id
        FROM wb_manager_sales_detail d
        JOIN cabs c ON c.id=d.cab_id
        LEFT JOIN catalog cat ON cat.article=d.article AND cat.article IS NOT NULL
