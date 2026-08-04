@@ -153,11 +153,8 @@ async function rebuildAdShareManagerSales(pool, options = {}) {
               CASE WHEN rev-ret > 0 THEN ROUND(ads / (rev-ret) * 100, 2) ELSE 0 END,
               'ads_share', NOW()
        FROM calculated
-       ON CONFLICT (cab_id, user_id, date) DO UPDATE SET
-         rev=EXCLUDED.rev, ads=EXCLUDED.ads, cost=EXCLUDED.cost, comm=EXCLUDED.comm,
-         cab_comm=EXCLUDED.cab_comm, log_f=EXCLUDED.log_f, log_r=EXCLUDED.log_r,
-         ret=EXCLUDED.ret, profit=EXCLUDED.profit, margin=EXCLUDED.margin,
-         drr=EXCLUDED.drr, source='ads_share', updated_at=NOW()`,
+       ON CONFLICT (cab_id, user_id, date) DO NOTHING
+    `,
       params
     );
     await client.query('COMMIT');

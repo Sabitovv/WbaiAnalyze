@@ -2770,6 +2770,42 @@ function ManagersReportPanel() {
       drr: netRev > 0 ? (ads / netRev) * 100 : 0 };
   }, [report]);
 
+  const cabRows = useMemo(() => {
+    const grouped = new Map();
+    for (const r of report) {
+      const g = grouped.get(r.cab_id);
+      if (!g) {
+        grouped.set(r.cab_id, {
+          cab_id: r.cab_id,
+          cab_name: r.cab_name,
+          rev: num(r.rev),
+          ads: num(r.ads),
+          cost: num(r.cost),
+          comm: num(r.comm),
+          cab_comm: num(r.cab_comm),
+          log_f: num(r.log_f),
+          log_r: num(r.log_r),
+          ret: num(r.ret),
+          profit: num(r.profit),
+        });
+      } else {
+        g.rev += num(r.rev);
+        g.ads += num(r.ads);
+        g.cost += num(r.cost);
+        g.comm += num(r.comm);
+        g.cab_comm += num(r.cab_comm);
+        g.log_f += num(r.log_f);
+        g.log_r += num(r.log_r);
+        g.ret += num(r.ret);
+        g.profit += num(r.profit);
+      }
+    }
+    return [...grouped.values()].map(g => {
+      const netRev = g.rev - g.ret;
+      return { ...g, margin: netRev > 0 ? (g.profit / netRev) * 100 : 0, drr: netRev > 0 ? (g.ads / netRev) * 100 : 0 };
+    }).sort((a, b) => String(a.cab_name).localeCompare(String(b.cab_name)));
+  }, [report]);
+
   const unassignedTotals = useMemo(() => {
     const sum = unassigned.reduce((s, x) => s + num(x.sum), 0);
     const views = unassigned.reduce((s, x) => s + num(x.views), 0);
@@ -2887,7 +2923,7 @@ function ManagersReportPanel() {
                   <th>Кабинет</th><th>Выручка</th><th>Реклама</th><th>Себест.</th><th>Комиссия</th><th>Эквайринг</th><th>Логистика</th><th>Прибыль</th><th>Маржа</th><th>ДРР</th>
                 </tr></thead>
                 <tbody>
-                  {report.map(r => (
+                  {cabRows.map(r => (
                     <tr key={r.cab_id}>
                       <td>{r.cab_name}</td>
                       <td style={{ textAlign: 'right' }}>{fmt(num(r.rev))} ₸</td>
@@ -2901,7 +2937,7 @@ function ManagersReportPanel() {
                       <td style={{ textAlign: 'right' }}>{fmtP(num(r.drr))}%</td>
                     </tr>
                   ))}
-                  {report.length === 0 && <tr><td colSpan={10} style={{ textAlign: 'center', color: 'var(--txt3)' }}>Нет данных за период</td></tr>}
+                  {cabRows.length === 0 && <tr><td colSpan={10} style={{ textAlign: 'center', color: 'var(--txt3)' }}>Нет данных за период</td></tr>}
                 </tbody>
               </table>
             </div>

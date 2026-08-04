@@ -453,7 +453,7 @@ app.get('/api/users/report', async (req, res) => {
     const { userId, dateFrom, dateTo } = req.query;
     if (!userId) return res.status(400).json({ error: 'userId required' });
     const { rows } = await pool.query(
-      `SELECT ms.cab_id, c.name AS cab_name, ms.date, ms.rev, ms.ads, ms.cost, ms.comm,
+      `SELECT ms.cab_id, c.name AS cab_name, ms.user_id, ms.date, ms.rev, ms.ads, ms.cost, ms.comm,
               ms.cab_comm, ms.log_f, ms.log_r, ms.ret, ms.profit, ms.margin, ms.drr
        FROM wb_manager_sales ms JOIN cabs c ON c.id=ms.cab_id
        WHERE ms.user_id=$1 AND ms.date BETWEEN $2 AND $3

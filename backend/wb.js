@@ -577,9 +577,14 @@ async function syncCab(pool, cab) {
   return next;
 }
 
-function findUserForArticle(article, users) {
+function findUserForArticle(article, users, cabId, userCabMap) {
   const text = String(article);
   for (const u of users) {
+    // Если у пользователя назначены кабинеты, матчим артикул только в них.
+    if (cabId != null && userCabMap) {
+      const allowedCabs = userCabMap.get(u.id);
+      if (allowedCabs && !allowedCabs.has(cabId)) continue;
+    }
     try {
       for (const re of u.regexes) {
         if (re.test(text)) return u;
@@ -685,6 +690,23 @@ async function buildCabSalesCandidate(pool, cab, rows, adsByDate, directAdsByMan
     userRows = result.rows;
   }
   const users = advertUsers(userRows);
+
+  let userCabMap = new Map();
+  if (Object.hasOwn(options, 'userCabMap')) {
+    userCabMap = options.userCabMap || userCabMap;
+  } else {
+    try {
+      const { rows: userCabRows } = await pool.query('SELECT user_id, cab_id FROM user_cabs');
+      for (const { user_id, cab_id } of userCabRows) {
+        if (!userCabMap.has(user_id)) userCabMap.set(user_id, new Set());
+        userCabMap.get(user_id).add(cab_id);
+      }
+    } catch (e) {
+      // В тестах/устаревших схемах таблицы может не быть — работаем без ограничения.
+      userCabMap = new Map();
+    }
+  }
+
   const exRateValue = Object.hasOwn(options, 'exRate')
     ? await resolveBuildOption(options.exRate)
     : await fetchRate();
@@ -738,7 +760,7 @@ async function buildCabSalesCandidate(pool, cab, rows, adsByDate, directAdsByMan
     day.logF += logF;
     day.logR += logR;
 
-    const user = findUserForArticle(article, users);
+    const user = findUserForArticle(article, users, cab.id, userCabMap);
     const groupKey = user ? `user:${String(user.id)}` : 'unassigned';
     if (!day.groups.has(groupKey)) {
       day.groups.set(groupKey, {
