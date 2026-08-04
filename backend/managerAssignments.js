@@ -25,18 +25,42 @@ async function reassignStoredCampaigns(pool) {
      ORDER BY id`
   );
   const users = compileUsers(userRows);
+
+  // Ограничиваем назначение кампаний кабинетами пользователя (user_cabs).
+  // Если у пользователя нет записей в user_cabs — ограничений нет (совместимость).
+  const userCabMap = new Map();
+  try {
+    const { rows: userCabRows } = await pool.query('SELECT user_id, cab_id FROM user_cabs');
+    for (const { user_id, cab_id } of userCabRows) {
+      if (!userCabMap.has(user_id)) userCabMap.set(user_id, new Set());
+      userCabMap.get(user_id).add(cab_id);
+    }
+  } catch (e) {
+    // В тестах/устаревших схемах таблицы может не быть — работаем без ограничения.
+  }
+
   const { rows: campaigns } = await pool.query(
-    `SELECT DISTINCT campaign_name
+    `SELECT DISTINCT campaign_name, cab_id
      FROM wb_advert_stats
      WHERE campaign_name IS NOT NULL`
   );
 
   const namesByUser = new Map(users.map(user => [user.id, []]));
+  const cabsByUser = new Map(users.map(user => [user.id, []]));
   const unassigned = [];
-  for (const { campaign_name: name } of campaigns) {
+  for (const { campaign_name: name, cab_id: cabId } of campaigns) {
     const user = findUser(name, users);
-    if (user) namesByUser.get(user.id).push(name);
-    else unassigned.push(name);
+    if (user) {
+      const allowedCabs = userCabMap.get(user.id);
+      if (allowedCabs && !allowedCabs.has(cabId)) {
+        unassigned.push({ name, cabId });
+      } else {
+        namesByUser.get(user.id).push(name);
+        cabsByUser.get(user.id).push(cabId);
+      }
+    } else {
+      unassigned.push({ name, cabId });
+    }
   }
 
   const client = await pool.connect();
@@ -45,20 +69,27 @@ async function reassignStoredCampaigns(pool) {
     await client.query('BEGIN');
     for (const [userId, names] of namesByUser) {
       if (!names.length) continue;
+      const cabIds = cabsByUser.get(userId);
       const result = await client.query(
-        `UPDATE wb_advert_stats
+        `UPDATE wb_advert_stats AS a
          SET user_id=$1, updated_at=NOW()
-         WHERE campaign_name = ANY($2::text[]) AND user_id IS DISTINCT FROM $1`,
-        [userId, names]
+         FROM unnest($2::text[], $3::int[]) AS t(name, cab_id)
+         WHERE a.campaign_name = t.name AND a.cab_id = t.cab_id
+           AND a.user_id IS DISTINCT FROM $1`,
+        [userId, names, cabIds]
       );
       updated += result.rowCount;
     }
     if (unassigned.length) {
+      const unNames = unassigned.map(x => x.name);
+      const unCabs = unassigned.map(x => x.cabId);
       const result = await client.query(
-        `UPDATE wb_advert_stats
+        `UPDATE wb_advert_stats AS a
          SET user_id=NULL, updated_at=NOW()
-         WHERE campaign_name = ANY($1::text[]) AND user_id IS NOT NULL`,
-        [unassigned]
+         FROM unnest($1::text[], $2::int[]) AS t(name, cab_id)
+         WHERE a.campaign_name = t.name AND a.cab_id = t.cab_id
+           AND a.user_id IS NOT NULL`,
+        [unNames, unCabs]
       );
       updated += result.rowCount;
     }
