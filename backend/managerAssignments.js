@@ -198,10 +198,36 @@ async function rebuildAdShareManagerSales(pool, options = {}) {
   }
 }
 
-async function refreshStoredManagerAssignments(pool, options = {}) {
-  const campaigns = await reassignStoredCampaigns(pool);
-  const sales = await rebuildAdShareManagerSales(pool, options);
-  return { campaigns, sales };
+async function cleanupArticleManagerSales(pool) {
+  // Удаляем article-атрибуцию, которая нарушает ограничения user_cabs.
+  // Если у пользователя есть хотя бы одна запись в user_cabs, он видит только разрешённые кабинеты.
+  const { rowCount: salesDeleted } = await pool.query(
+    `DELETE FROM wb_manager_sales
+     WHERE source = 'article'
+       AND user_id IN (SELECT user_id FROM user_cabs)
+       AND NOT EXISTS (
+         SELECT 1 FROM user_cabs uc
+         WHERE uc.user_id = wb_manager_sales.user_id
+           AND uc.cab_id = wb_manager_sales.cab_id
+       )`
+  );
+  const { rowCount: detailDeleted } = await pool.query(
+    `DELETE FROM wb_manager_sales_detail
+     WHERE user_id IN (SELECT user_id FROM user_cabs)
+       AND NOT EXISTS (
+         SELECT 1 FROM user_cabs uc
+         WHERE uc.user_id = wb_manager_sales_detail.user_id
+           AND uc.cab_id = wb_manager_sales_detail.cab_id
+       )`
+  );
+  return { salesDeleted, detailDeleted };
 }
 
-module.exports = { reassignStoredCampaigns, rebuildAdShareManagerSales, refreshStoredManagerAssignments };
+async function refreshStoredManagerAssignments(pool, options = {}) {
+  const cleaned = await cleanupArticleManagerSales(pool);
+  const campaigns = await reassignStoredCampaigns(pool);
+  const sales = await rebuildAdShareManagerSales(pool, options);
+  return { ...cleaned, campaigns, sales };
+}
+
+module.exports = { reassignStoredCampaigns, rebuildAdShareManagerSales, refreshStoredManagerAssignments, cleanupArticleManagerSales };
