@@ -999,9 +999,10 @@ app.use('/api/wb', (function() {
 
   r.post('/reassign-campaigns', async (_req, res) => {
     try {
-      const { refreshStoredManagerAssignments } = require('./managerAssignments');
-      const result = await refreshStoredManagerAssignments(pool);
-      res.json(result);
+      const { refreshStoredManagerAssignments, rebuildAdShareManagerSales } = require('./managerAssignments');
+      await refreshStoredManagerAssignments(pool);
+      const sales = await rebuildAdShareManagerSales(pool);
+      res.json({ campaigns: sales });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 

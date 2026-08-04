@@ -4,7 +4,7 @@
 // последовательно с большими паузами.
 
 const { importCabSales, syncCab } = require('./wb');
-const { reassignStoredCampaigns } = require('./managerAssignments');
+const { reassignStoredCampaigns, rebuildAdShareManagerSales } = require('./managerAssignments');
 
 let isRunning = false;
 let lastResult = null;
@@ -141,6 +141,12 @@ async function runImport(pool, opts = {}) {
     if (doDeepBackfill) {
       await setSetting(pool, 'scheduler_last_deep_run', startedAt);
     }
+
+    // Пересчёт фин.показателей менеджеров
+    try {
+      const rebuilt = await rebuildAdShareManagerSales(pool);
+      console.log(`WB scheduler: пересчёт менеджеров — ${rebuilt} строк`);
+    } catch (e) { console.error('WB scheduler: ошибка rebuild:', e.message); }
 
     lastResult = { startedAt, finishedAt: new Date().toISOString(), cabs: cabs.length, results };
     console.log('WB scheduler: фоновый импорт завершён');
