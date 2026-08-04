@@ -1821,7 +1821,7 @@ function advertWarning(code, message, count) {
   return { code, severity: 'warning', message, details: { count } };
 }
 
-function buildAdvertCandidate({ campaigns, stats, users, isKZT, exRate, dateFrom, dateTo }) {
+function buildAdvertCandidate({ campaigns, stats, users, isKZT, exRate, dateFrom, dateTo, cabId, userCabMap }) {
   const requestedCampaignEntries = Array.isArray(campaigns) ? campaigns : [];
   const campaignEntriesById = new Map();
   for (const campaign of requestedCampaignEntries) {
@@ -1876,7 +1876,7 @@ function buildAdvertCandidate({ campaigns, stats, users, isKZT, exRate, dateFrom
       || stat.name
       || stat.settings?.name
       || `Кампания ${campaignId}`;
-    const campaignUser = findUserForArticle(String(campaignName).toLowerCase(), normalizedUsers);
+    const campaignUser = findUserForArticle(String(campaignName).toLowerCase(), normalizedUsers, cabId, userCabMap);
     const campaignType = advertOptionalInteger(campaign.type ?? stat.type);
     const status = advertOptionalInteger(campaign.status);
     const dates = new Set();
@@ -2097,6 +2097,16 @@ async function importCabAds(pool, cab, dateFrom, dateTo, isKZT = false, opts = {
   }
 
   const { rows: users } = await pool.query(`SELECT id, pattern FROM users WHERE pattern IS NOT NULL AND pattern <> '' ORDER BY id`);
+  const userCabMap = new Map();
+  try {
+    const { rows: userCabRows } = await pool.query('SELECT user_id, cab_id FROM user_cabs');
+    for (const { user_id, cab_id } of userCabRows) {
+      if (!userCabMap.has(user_id)) userCabMap.set(user_id, new Set());
+      userCabMap.get(user_id).add(cab_id);
+    }
+  } catch (e) {
+    // совместимость со старыми схемами
+  }
   const fetchAdvertsForImport = opts.fetchAdverts || fetchAdverts;
   const fetchAdvertStatsForImport = opts.fetchAdvertStats || fetchAdvertStats;
   const fetchRateForImport = opts.fetchRate || fetchRate;
@@ -2163,6 +2173,8 @@ async function importCabAds(pool, cab, dateFrom, dateTo, isKZT = false, opts = {
     exRate,
     dateFrom,
     dateTo,
+    cabId: cab.id,
+    userCabMap,
   });
   console.log(`WB ads cab ${cab.id}: fetched stats for ${candidate.returnedCampaigns}/${candidate.requestedCampaigns} campaigns`);
 
