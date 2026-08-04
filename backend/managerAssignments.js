@@ -38,19 +38,6 @@ async function reassignStoredCampaigns(pool) {
   const users = compileUsers(userRows);
   const usersById = new Map(users.map(u => [u.id, u]));
 
-  // Ограничиваем назначение кампаний кабинетами пользователя (user_cabs).
-  // Если у пользователя нет записей в user_cabs — ограничений нет (совместимость).
-  const userCabMap = new Map();
-  try {
-    const { rows: userCabRows } = await pool.query('SELECT user_id, cab_id FROM user_cabs');
-    for (const { user_id, cab_id } of userCabRows) {
-      if (!userCabMap.has(user_id)) userCabMap.set(user_id, new Set());
-      userCabMap.get(user_id).add(cab_id);
-    }
-  } catch (e) {
-    // В тестах/устаревших схемах таблицы может не быть — работаем без ограничения.
-  }
-
   // Ручные назначения имеют приоритет над паттерном.
   const manualAssignments = await loadAdvertCampaignAssignments(pool);
 
@@ -73,13 +60,8 @@ async function reassignStoredCampaigns(pool) {
       user = findUser(name, users);
     }
     if (user) {
-      const allowedCabs = userCabMap.get(user.id);
-      if (allowedCabs && !allowedCabs.has(cabId)) {
-        unassigned.push({ campaignId, cabId });
-      } else {
-        idsByUser.get(user.id).push(campaignId);
-        cabsByUser.get(user.id).push(cabId);
-      }
+      idsByUser.get(user.id).push(campaignId);
+      cabsByUser.get(user.id).push(cabId);
     } else {
       unassigned.push({ campaignId, cabId });
     }
@@ -221,28 +203,10 @@ async function rebuildAdShareManagerSales(pool, options = {}) {
 }
 
 async function cleanupArticleManagerSales(pool) {
-  // Удаляем article-атрибуцию, которая нарушает ограничения user_cabs.
-  // Если у пользователя есть хотя бы одна запись в user_cabs, он видит только разрешённые кабинеты.
-  const { rowCount: salesDeleted } = await pool.query(
-    `DELETE FROM wb_manager_sales
-     WHERE source = 'article'
-       AND user_id IN (SELECT user_id FROM user_cabs)
-       AND NOT EXISTS (
-         SELECT 1 FROM user_cabs uc
-         WHERE uc.user_id = wb_manager_sales.user_id
-           AND uc.cab_id = wb_manager_sales.cab_id
-       )`
-  );
-  const { rowCount: detailDeleted } = await pool.query(
-    `DELETE FROM wb_manager_sales_detail
-     WHERE user_id IN (SELECT user_id FROM user_cabs)
-       AND NOT EXISTS (
-         SELECT 1 FROM user_cabs uc
-         WHERE uc.user_id = wb_manager_sales_detail.user_id
-           AND uc.cab_id = wb_manager_sales_detail.cab_id
-       )`
-  );
-  return { salesDeleted, detailDeleted };
+  // Ранее здесь удалялась article-атрибуция, нарушавшая ограничения user_cabs.
+  // Теперь pattern-матчинг глобальный: менеджер получает кампании по шаблону
+  // из всех кабинетов, поэтому cleanup не нужен.
+  return { salesDeleted: 0, detailDeleted: 0 };
 }
 
 async function refreshStoredManagerAssignments(pool, options = {}) {

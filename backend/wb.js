@@ -577,14 +577,9 @@ async function syncCab(pool, cab) {
   return next;
 }
 
-function findUserForArticle(article, users, cabId, userCabMap) {
+function findUserForArticle(article, users) {
   const text = String(article);
   for (const u of users) {
-    // Если у пользователя назначены кабинеты, матчим артикул только в них.
-    if (cabId != null && userCabMap) {
-      const allowedCabs = userCabMap.get(u.id);
-      if (allowedCabs && !allowedCabs.has(cabId)) continue;
-    }
     try {
       for (const re of u.regexes) {
         if (re.test(text)) return u;
@@ -691,22 +686,6 @@ async function buildCabSalesCandidate(pool, cab, rows, adsByDate, directAdsByMan
   }
   const users = advertUsers(userRows);
 
-  let userCabMap = new Map();
-  if (Object.hasOwn(options, 'userCabMap')) {
-    userCabMap = options.userCabMap || userCabMap;
-  } else {
-    try {
-      const { rows: userCabRows } = await pool.query('SELECT user_id, cab_id FROM user_cabs');
-      for (const { user_id, cab_id } of userCabRows) {
-        if (!userCabMap.has(user_id)) userCabMap.set(user_id, new Set());
-        userCabMap.get(user_id).add(cab_id);
-      }
-    } catch (e) {
-      // В тестах/устаревших схемах таблицы может не быть — работаем без ограничения.
-      userCabMap = new Map();
-    }
-  }
-
   const exRateValue = Object.hasOwn(options, 'exRate')
     ? await resolveBuildOption(options.exRate)
     : await fetchRate();
@@ -760,7 +739,7 @@ async function buildCabSalesCandidate(pool, cab, rows, adsByDate, directAdsByMan
     day.logF += logF;
     day.logR += logR;
 
-    const user = findUserForArticle(article, users, cab.id, userCabMap);
+    const user = findUserForArticle(article, users);
     const groupKey = user ? `user:${String(user.id)}` : 'unassigned';
     if (!day.groups.has(groupKey)) {
       day.groups.set(groupKey, {
@@ -1821,7 +1800,7 @@ function advertWarning(code, message, count) {
   return { code, severity: 'warning', message, details: { count } };
 }
 
-function buildAdvertCandidate({ campaigns, stats, users, isKZT, exRate, dateFrom, dateTo, cabId, userCabMap, manualAssignments }) {
+function buildAdvertCandidate({ campaigns, stats, users, isKZT, exRate, dateFrom, dateTo, cabId, manualAssignments }) {
   const requestedCampaignEntries = Array.isArray(campaigns) ? campaigns : [];
   const campaignEntriesById = new Map();
   for (const campaign of requestedCampaignEntries) {
@@ -1879,7 +1858,7 @@ function buildAdvertCandidate({ campaigns, stats, users, isKZT, exRate, dateFrom
     const manualUserId = manualAssignments ? manualAssignments.get(`${cabId}:${campaignId}`) : null;
     const campaignUser = manualUserId
       ? normalizedUsers.find(u => u.id === manualUserId) || null
-      : findUserForArticle(String(campaignName).toLowerCase(), normalizedUsers, cabId, userCabMap);
+      : findUserForArticle(String(campaignName).toLowerCase(), normalizedUsers);
     const campaignType = advertOptionalInteger(campaign.type ?? stat.type);
     const status = advertOptionalInteger(campaign.status);
     const dates = new Set();
@@ -2100,16 +2079,6 @@ async function importCabAds(pool, cab, dateFrom, dateTo, isKZT = false, opts = {
   }
 
   const { rows: users } = await pool.query(`SELECT id, pattern FROM users WHERE pattern IS NOT NULL AND pattern <> '' ORDER BY id`);
-  const userCabMap = new Map();
-  try {
-    const { rows: userCabRows } = await pool.query('SELECT user_id, cab_id FROM user_cabs');
-    for (const { user_id, cab_id } of userCabRows) {
-      if (!userCabMap.has(user_id)) userCabMap.set(user_id, new Set());
-      userCabMap.get(user_id).add(cab_id);
-    }
-  } catch (e) {
-    // совместимость со старыми схемами
-  }
 
   let manualAssignments = new Map();
   try {
@@ -2185,7 +2154,6 @@ async function importCabAds(pool, cab, dateFrom, dateTo, isKZT = false, opts = {
     dateFrom,
     dateTo,
     cabId: cab.id,
-    userCabMap,
     manualAssignments,
   });
   console.log(`WB ads cab ${cab.id}: fetched stats for ${candidate.returnedCampaigns}/${candidate.requestedCampaigns} campaigns`);
