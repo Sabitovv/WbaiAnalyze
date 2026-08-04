@@ -780,6 +780,18 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
   const [schedulerStatus, setSchedulerStatus] = useState(null);
   const [importStatus, setImportStatus] = useState(null);
 
+  // Ручное назначение рекламных кампаний
+  const [campaigns, setCampaigns] = useState([]);
+  const [campaignsLoading, setCampaignsLoading] = useState(false);
+  const [campaignDates, setCampaignDates] = useState(() => {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - 30);
+    return { dateFrom: from.toISOString().split('T')[0], dateTo: to.toISOString().split('T')[0] };
+  });
+  const [campaignFilter, setCampaignFilter] = useState('');
+  const [campaignSaving, setCampaignSaving] = useState(null);
+
   useEffect(() => {
     let mounted = true;
     const load = async () => {
@@ -795,6 +807,45 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
     const id = setInterval(load, 60_000);
     return () => { mounted = false; clearInterval(id); };
   }, []);
+
+  const loadCampaigns = useCallback(async () => {
+    setCampaignsLoading(true);
+    try {
+      const data = await api.getAllCampaigns(campaignDates.dateFrom, campaignDates.dateTo);
+      setCampaigns(data);
+    } catch (e) { setErr(e.message); }
+    finally { setCampaignsLoading(false); }
+  }, [campaignDates.dateFrom, campaignDates.dateTo]);
+
+  const assignCampaign = async (campaignId, cabId, userId) => {
+    setCampaignSaving(`${cabId}:${campaignId}`);
+    try {
+      await api.setCampaignAssignment(campaignId, cabId, userId);
+      setCampaigns(cs => cs.map(c =>
+        c.campaign_id === campaignId && c.cab_id === cabId
+          ? { ...c, user_id: userId, manual_user_id: userId }
+          : c
+      ));
+    } catch (e) { setErr(e.message); }
+    finally { setCampaignSaving(null); }
+  };
+
+  const clearCampaignAssignment = async (campaignId, cabId) => {
+    setCampaignSaving(`${cabId}:${campaignId}`);
+    try {
+      await api.deleteCampaignAssignment(campaignId, cabId);
+      setCampaigns(cs => cs.map(c => {
+        if (c.campaign_id !== campaignId || c.cab_id !== cabId) return c;
+        return { ...c, manual_user_id: null };
+      }));
+    } catch (e) { setErr(e.message); }
+    finally { setCampaignSaving(null); }
+  };
+
+  useEffect(() => {
+    if (tab !== 'campaigns') return;
+    loadCampaigns();
+  }, [tab, loadCampaigns]);
 
 
   // Калькулятор остатка после удержаний WB (не используется — данные из API)
@@ -914,7 +965,7 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
     catch (e) { setErr(e.message); }
   };
 
-  const TABS = [{ k: 'products', l: '📦 Товары' }, { k: 'cabs', l: '🏢 Кабинеты' }, { k: 'users', l: '👥 Пользователи' }];
+  const TABS = [{ k: 'products', l: '📦 Товары' }, { k: 'cabs', l: '🏢 Кабинеты' }, { k: 'users', l: '👥 Пользователи' }, { k: 'campaigns', l: '🎯 Кампании' }];
 
   return (
     <div className="fade-in">
@@ -1435,6 +1486,98 @@ function AdminPanel({ catalog, setCatalog, cabs, setCabs, users, setUsers, allCa
               </div>
             );
           })()}
+        </div>
+      )}
+
+      {tab === 'campaigns' && (
+        <div className="card" style={{ padding: '20px 24px' }}>
+          <div className="section-header" style={{ marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+            <div>
+              <div className="section-title">Назначение рекламных кампаний</div>
+              <div className="section-sub">
+                {campaignsLoading ? 'Загрузка…' : `${campaigns.length} кампаний за период`}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input type="date" className="form-input" style={{ width: 140 }}
+                value={campaignDates.dateFrom}
+                onChange={e => setCampaignDates(d => ({ ...d, dateFrom: e.target.value }))} />
+              <span style={{ color: 'var(--txt3)' }}>—</span>
+              <input type="date" className="form-input" style={{ width: 140 }}
+                value={campaignDates.dateTo}
+                onChange={e => setCampaignDates(d => ({ ...d, dateTo: e.target.value }))} />
+              <input type="text" className="form-input" style={{ width: 200 }}
+                placeholder="Поиск по названию или кабинету"
+                value={campaignFilter}
+                onChange={e => setCampaignFilter(e.target.value)} />
+              <button className="btn" onClick={loadCampaigns} disabled={campaignsLoading}>
+                {campaignsLoading ? 'Обновление…' : 'Обновить'}
+              </button>
+            </div>
+          </div>
+
+          <div style={{ overflowX: 'auto' }}>
+            <table>
+              <thead><tr>
+                <th style={{ textAlign: 'left' }}>Кабинет</th>
+                <th style={{ textAlign: 'left' }}>Кампания</th>
+                <th>Дней</th>
+                <th>Показы</th>
+                <th>Клики</th>
+                <th>Заказы</th>
+                <th>Расход</th>
+                <th>Менеджер</th>
+                <th></th>
+              </tr></thead>
+              <tbody>
+                {campaigns
+                  .filter(c => {
+                    const f = campaignFilter.toLowerCase();
+                    return !f
+                      || (c.cab_name || '').toLowerCase().includes(f)
+                      || (c.campaign_name || '').toLowerCase().includes(f);
+                  })
+                  .map(c => {
+                    const isManual = c.manual_user_id != null;
+                    const saving = campaignSaving === `${c.cab_id}:${c.campaign_id}`;
+                    return (
+                      <tr key={`${c.cab_id}:${c.campaign_id}`}>
+                        <td>{c.cab_name}</td>
+                        <td style={{ fontWeight: 500 }}>{c.campaign_name}</td>
+                        <td style={{ textAlign: 'center' }}>{c.days}</td>
+                        <td style={{ textAlign: 'right' }}>{fmt(c.views)}</td>
+                        <td style={{ textAlign: 'right' }}>{fmt(c.clicks)}</td>
+                        <td style={{ textAlign: 'right' }}>{fmt(c.orders)}</td>
+                        <td style={{ textAlign: 'right' }}>{fmt(c.sum)} ₸</td>
+                        <td style={{ textAlign: 'center' }}>
+                          {isManual && <span className="badge badge-blue" style={{ fontSize: 10, marginRight: 6 }}>ручное</span>}
+                          <select
+                            className="form-input"
+                            style={{ width: 150, fontSize: 12 }}
+                            value={c.user_id || ''}
+                            disabled={saving}
+                            onChange={e => {
+                              const userId = e.target.value ? +e.target.value : null;
+                              if (userId) assignCampaign(c.campaign_id, c.cab_id, userId);
+                              else clearCampaignAssignment(c.campaign_id, c.cab_id);
+                            }}
+                          >
+                            <option value="">Не назначен</option>
+                            {users.map(u => <option key={u.id} value={u.id}>{u.name || u.login}</option>)}
+                          </select>
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          {saving ? <span style={{ fontSize: 11, color: 'var(--txt3)' }}>сохранение…</span> : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                {campaigns.length === 0 && !campaignsLoading && (
+                  <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--txt3)' }}>Нет кампаний за выбранный период</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

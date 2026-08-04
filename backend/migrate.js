@@ -359,6 +359,15 @@ async function migrate() {
         updated_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE(cab_id, campaign_id, date)
       );
+
+      CREATE TABLE IF NOT EXISTS wb_advert_campaign_assignments (
+        campaign_id BIGINT NOT NULL,
+        cab_id INTEGER REFERENCES cabs(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (campaign_id, cab_id)
+      );
     `);
 
     // Дефолтный admin — обновляем пароль при каждом деплое (хеш от целевой машины)

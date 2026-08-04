@@ -10,7 +10,7 @@ const {
   normalizeProductText,
   isAccessoryArticle,
 } = require('./catalogTemplates');
-const { rebuildAdShareManagerSales } = require('./managerAssignments');
+const { rebuildAdShareManagerSales, loadAdvertCampaignAssignments } = require('./managerAssignments');
 const { toDateKey } = require('./dateUtils');
 const { prepareFinancialRows, rowDate, validateImportCandidate } = require('./wbImportValidation');
 const { startImportRun, finishImportRun, loadPreviousDays, recordImportDays } = require('./wbImportJournal');
@@ -1821,7 +1821,7 @@ function advertWarning(code, message, count) {
   return { code, severity: 'warning', message, details: { count } };
 }
 
-function buildAdvertCandidate({ campaigns, stats, users, isKZT, exRate, dateFrom, dateTo, cabId, userCabMap }) {
+function buildAdvertCandidate({ campaigns, stats, users, isKZT, exRate, dateFrom, dateTo, cabId, userCabMap, manualAssignments }) {
   const requestedCampaignEntries = Array.isArray(campaigns) ? campaigns : [];
   const campaignEntriesById = new Map();
   for (const campaign of requestedCampaignEntries) {
@@ -1876,7 +1876,10 @@ function buildAdvertCandidate({ campaigns, stats, users, isKZT, exRate, dateFrom
       || stat.name
       || stat.settings?.name
       || `Кампания ${campaignId}`;
-    const campaignUser = findUserForArticle(String(campaignName).toLowerCase(), normalizedUsers, cabId, userCabMap);
+    const manualUserId = manualAssignments ? manualAssignments.get(`${cabId}:${campaignId}`) : null;
+    const campaignUser = manualUserId
+      ? normalizedUsers.find(u => u.id === manualUserId) || null
+      : findUserForArticle(String(campaignName).toLowerCase(), normalizedUsers, cabId, userCabMap);
     const campaignType = advertOptionalInteger(campaign.type ?? stat.type);
     const status = advertOptionalInteger(campaign.status);
     const dates = new Set();
@@ -2107,6 +2110,14 @@ async function importCabAds(pool, cab, dateFrom, dateTo, isKZT = false, opts = {
   } catch (e) {
     // совместимость со старыми схемами
   }
+
+  let manualAssignments = new Map();
+  try {
+    manualAssignments = await loadAdvertCampaignAssignments(pool);
+  } catch (e) {
+    // совместимость со старыми схемами
+  }
+
   const fetchAdvertsForImport = opts.fetchAdverts || fetchAdverts;
   const fetchAdvertStatsForImport = opts.fetchAdvertStats || fetchAdvertStats;
   const fetchRateForImport = opts.fetchRate || fetchRate;
@@ -2175,6 +2186,7 @@ async function importCabAds(pool, cab, dateFrom, dateTo, isKZT = false, opts = {
     dateTo,
     cabId: cab.id,
     userCabMap,
+    manualAssignments,
   });
   console.log(`WB ads cab ${cab.id}: fetched stats for ${candidate.returnedCampaigns}/${candidate.requestedCampaigns} campaigns`);
 

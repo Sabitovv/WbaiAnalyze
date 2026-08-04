@@ -17,6 +17,17 @@ function findUser(text, users) {
   return users.find(user => user.regexes.some(regex => regex.test(String(text || '')))) || null;
 }
 
+async function loadAdvertCampaignAssignments(pool) {
+  const { rows } = await pool.query(
+    `SELECT campaign_id, cab_id, user_id FROM wb_advert_campaign_assignments`
+  );
+  const map = new Map();
+  for (const { campaign_id, cab_id, user_id } of rows) {
+    map.set(`${cab_id}:${campaign_id}`, user_id);
+  }
+  return map;
+}
+
 async function reassignStoredCampaigns(pool) {
   const { rows: userRows } = await pool.query(
     `SELECT id, pattern
@@ -25,6 +36,7 @@ async function reassignStoredCampaigns(pool) {
      ORDER BY id`
   );
   const users = compileUsers(userRows);
+  const usersById = new Map(users.map(u => [u.id, u]));
 
   // Ограничиваем назначение кампаний кабинетами пользователя (user_cabs).
   // Если у пользователя нет записей в user_cabs — ограничений нет (совместимость).
@@ -39,27 +51,37 @@ async function reassignStoredCampaigns(pool) {
     // В тестах/устаревших схемах таблицы может не быть — работаем без ограничения.
   }
 
+  // Ручные назначения имеют приоритет над паттерном.
+  const manualAssignments = await loadAdvertCampaignAssignments(pool);
+
   const { rows: campaigns } = await pool.query(
-    `SELECT DISTINCT campaign_name, cab_id
+    `SELECT DISTINCT campaign_id, campaign_name, cab_id
      FROM wb_advert_stats
      WHERE campaign_name IS NOT NULL`
   );
 
-  const namesByUser = new Map(users.map(user => [user.id, []]));
+  const idsByUser = new Map(users.map(user => [user.id, []]));
   const cabsByUser = new Map(users.map(user => [user.id, []]));
   const unassigned = [];
-  for (const { campaign_name: name, cab_id: cabId } of campaigns) {
-    const user = findUser(name, users);
+  for (const { campaign_id: campaignId, campaign_name: name, cab_id: cabId } of campaigns) {
+    const manualUserId = manualAssignments.get(`${cabId}:${campaignId}`);
+    let user = null;
+    if (manualUserId) {
+      user = usersById.get(manualUserId);
+    }
+    if (!user) {
+      user = findUser(name, users);
+    }
     if (user) {
       const allowedCabs = userCabMap.get(user.id);
       if (allowedCabs && !allowedCabs.has(cabId)) {
-        unassigned.push({ name, cabId });
+        unassigned.push({ campaignId, cabId });
       } else {
-        namesByUser.get(user.id).push(name);
+        idsByUser.get(user.id).push(campaignId);
         cabsByUser.get(user.id).push(cabId);
       }
     } else {
-      unassigned.push({ name, cabId });
+      unassigned.push({ campaignId, cabId });
     }
   }
 
@@ -67,29 +89,29 @@ async function reassignStoredCampaigns(pool) {
   let updated = 0;
   try {
     await client.query('BEGIN');
-    for (const [userId, names] of namesByUser) {
-      if (!names.length) continue;
+    for (const [userId, ids] of idsByUser) {
+      if (!ids.length) continue;
       const cabIds = cabsByUser.get(userId);
       const result = await client.query(
         `UPDATE wb_advert_stats AS a
          SET user_id=$1, updated_at=NOW()
-         FROM unnest($2::text[], $3::int[]) AS t(name, cab_id)
-         WHERE a.campaign_name = t.name AND a.cab_id = t.cab_id
+         FROM unnest($2::bigint[], $3::int[]) AS t(campaign_id, cab_id)
+         WHERE a.campaign_id = t.campaign_id AND a.cab_id = t.cab_id
            AND a.user_id IS DISTINCT FROM $1`,
-        [userId, names, cabIds]
+        [userId, ids, cabIds]
       );
       updated += result.rowCount;
     }
     if (unassigned.length) {
-      const unNames = unassigned.map(x => x.name);
+      const unIds = unassigned.map(x => x.campaignId);
       const unCabs = unassigned.map(x => x.cabId);
       const result = await client.query(
         `UPDATE wb_advert_stats AS a
          SET user_id=NULL, updated_at=NOW()
-         FROM unnest($1::text[], $2::int[]) AS t(name, cab_id)
-         WHERE a.campaign_name = t.name AND a.cab_id = t.cab_id
+         FROM unnest($1::bigint[], $2::int[]) AS t(campaign_id, cab_id)
+         WHERE a.campaign_id = t.campaign_id AND a.cab_id = t.cab_id
            AND a.user_id IS NOT NULL`,
-        [unNames, unCabs]
+        [unIds, unCabs]
       );
       updated += result.rowCount;
     }
@@ -230,4 +252,10 @@ async function refreshStoredManagerAssignments(pool, options = {}) {
   return { ...cleaned, campaigns, sales };
 }
 
-module.exports = { reassignStoredCampaigns, rebuildAdShareManagerSales, refreshStoredManagerAssignments, cleanupArticleManagerSales };
+module.exports = {
+  reassignStoredCampaigns,
+  rebuildAdShareManagerSales,
+  refreshStoredManagerAssignments,
+  cleanupArticleManagerSales,
+  loadAdvertCampaignAssignments,
+};

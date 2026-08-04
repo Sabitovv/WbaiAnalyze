@@ -78,6 +78,10 @@ export const api = {
   updateUser:         (id, data)          => req('PUT',    `/users/${id}`, data),
   getUserReport:      (id, dateFrom, dateTo) => req('GET', `/users/report?userId=${id}&dateFrom=${dateFrom}&dateTo=${dateTo}`),
   getUserDetail:      (id, dateFrom, dateTo) => req('GET', `/users/report-detail?userId=${id}&dateFrom=${dateFrom}&dateTo=${dateTo}`),
+
+  getAllCampaigns:    (dateFrom, dateTo) => req('GET', `/campaigns/all?dateFrom=${dateFrom}&dateTo=${dateTo}`),
+  setCampaignAssignment: (campaignId, cabId, userId) => req('POST', '/campaign-assignments', { campaignId, cabId, userId }),
+  deleteCampaignAssignment: (campaignId, cabId) => req('DELETE', `/campaign-assignments/${campaignId}/${cabId}`),
   getUserCampaigns:   (id, dateFrom, dateTo) => req('GET', `/users/${id}/campaigns?dateFrom=${dateFrom}&dateTo=${dateTo}`),
   getUnassignedCampaigns: (dateFrom, dateTo) => req('GET', `/campaigns/unassigned?dateFrom=${dateFrom}&dateTo=${dateTo}`),
   getDailyReport:       (dateFrom, dateTo, cabId = 'all') => req('GET', `/reports/daily?dateFrom=${dateFrom}&dateTo=${dateTo}&cabId=${cabId}`),

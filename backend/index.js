@@ -86,6 +86,15 @@ pool.query(`CREATE TABLE IF NOT EXISTS wb_advert_stats (
   UNIQUE(cab_id, campaign_id, date)
 )`).catch(e => console.error('wb_advert_stats init error:', e.message));
 
+pool.query(`CREATE TABLE IF NOT EXISTS wb_advert_campaign_assignments (
+  campaign_id BIGINT NOT NULL,
+  cab_id INTEGER REFERENCES cabs(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (campaign_id, cab_id)
+)`).catch(e => console.error('wb_advert_campaign_assignments init error:', e.message));
+
 // ── Курс RUB/KZT ─────────────────────────────────────────────────────────────
 app.get('/api/rate', async (_req, res) => {
   try {
@@ -515,6 +524,57 @@ app.get('/api/campaigns/unassigned', async (req, res) => {
       [dateFrom, dateTo]
     );
     res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/campaigns/all', async (req, res) => {
+  try {
+    const { dateFrom, dateTo } = req.query;
+    const { rows } = await pool.query(
+      `SELECT a.cab_id, c.name AS cab_name, a.campaign_id, a.campaign_name,
+              COALESCE(ca.user_id, a.user_id) AS user_id,
+              ca.user_id AS manual_user_id,
+              COUNT(DISTINCT a.date)::int AS days,
+              SUM(a.views)::bigint AS views,
+              SUM(a.clicks)::bigint AS clicks,
+              SUM(a.orders)::bigint AS orders,
+              ROUND(SUM(a.sum)::numeric,2) AS sum
+       FROM wb_advert_stats a
+       JOIN cabs c ON c.id=a.cab_id
+       LEFT JOIN wb_advert_campaign_assignments ca
+         ON ca.campaign_id=a.campaign_id AND ca.cab_id=a.cab_id
+       WHERE a.date BETWEEN $1 AND $2
+       GROUP BY a.cab_id, c.name, a.campaign_id, a.campaign_name, ca.user_id, a.user_id
+       ORDER BY SUM(a.sum) DESC`,
+      [dateFrom, dateTo]
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/campaign-assignments', async (req, res) => {
+  try {
+    const { campaignId, cabId, userId } = req.body;
+    if (!campaignId || !cabId || !userId) {
+      return res.status(400).json({ error: 'campaignId, cabId, userId required' });
+    }
+    await pool.query(
+      `INSERT INTO wb_advert_campaign_assignments (campaign_id, cab_id, user_id, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (campaign_id, cab_id) DO UPDATE SET user_id=$3, updated_at=NOW()`,
+      [campaignId, cabId, userId]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/campaign-assignments/:campaignId/:cabId', async (req, res) => {
+  try {
+    await pool.query(
+      `DELETE FROM wb_advert_campaign_assignments WHERE campaign_id=$1 AND cab_id=$2`,
+      [req.params.campaignId, req.params.cabId]
+    );
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
